@@ -93,6 +93,16 @@ export async function orderPage(root, id) {
   };
   const reload = async () => { o = await api.get('/api/orders/' + id); renderProducts(); };
   renderProducts();
+  const dealBox = h('div.col');
+  api.get('/api/crm/deals?order_id=' + id, { silent: true }).then((ds) => {
+    clear(dealBox, h('div.sec-title.small.muted', 'СДЕЛКА В CRM'),
+      ds.length ? ds.map((d) => h('a', { href: '#/deal/' + d.id }, d.name + ' · ' + (d.stage_name || '')))
+        : h('button.btn.sm', { onclick: async () => {
+          const d = await api.post('/api/crm/deals', { name: `Заказ №${o.number}${o.client ? ' — ' + o.client : ''}`, order_id: id, source: 'Заказ',
+            new_contact: o.client || o.phone ? { name: o.client, phone: o.phone } : undefined });
+          location.hash = '#/deal/' + d.id;
+        } }, 'Создать сделку'));
+  }).catch(() => {});
 
   root.appendChild(h('div.page',
     h('div.page-head',
@@ -118,7 +128,7 @@ export async function orderPage(root, id) {
           await save({ status: v });
           const b = root.querySelector('.page-head .badge'); b.className = 'badge st-' + v; b.textContent = stName(sts, v);
         })),
-        field('Комментарий', h('textarea', { onchange: (e) => save({ comment: e.target.value }) }, o.comment || ''))),
+        field('Комментарий', h('textarea', { onchange: (e) => save({ comment: e.target.value }) }, o.comment || '')), dealBox),
       h('div.col', h('h2', 'Изделия'), cards))));
 }
 

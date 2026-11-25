@@ -4,17 +4,21 @@ import { ordersPage, orderPage } from './orders.js';
 import { constructorPage } from './constructor.js';
 import { libraryPage } from './library.js';
 import { hardwareEditor } from './hweditor.js';
+import { dealsPage, dealPage } from './crm-deals.js';
+import { contactsPage, contactPage, companiesPage, companyPage } from './crm-people.js';
+import { tasksPage, analyticsPage } from './crm-tasks.js';
+import { crmSettingsPage } from './crm-settings.js';
+import { crmUsers, currentUser, setCurrentUser } from './crm-common.js';
 
 const app = document.getElementById('app');
 let cleanup = null;
 
 async function route() {
   if (cleanup) { try { cleanup(); } catch (_) { /* */ } cleanup = null; }
-  const hash = location.hash.replace(/^#\/?/, '') || 'orders';
+  const hash = location.hash.replace(/^#\/?/, '') || 'deals';
   const [section, a, b] = hash.split('/');
-  document.querySelectorAll('[data-nav]').forEach((el) => el.classList.toggle('active',
-    el.dataset.nav === section || (el.dataset.nav === 'library' && section === 'hardware') ||
-    (el.dataset.nav === 'orders' && (section === 'order' || section === 'product'))));
+  const alias = { hardware: 'library', order: 'orders', product: 'orders', deal: 'deals', contact: 'contacts', company: 'contacts', companies: 'contacts', 'crm-settings': 'settings' };
+  document.querySelectorAll('[data-nav]').forEach((el) => el.classList.toggle('active', el.dataset.nav === (alias[section] || section)));
   clear(app);
   document.getElementById('save-state').textContent = '';
   try {
@@ -24,7 +28,16 @@ async function route() {
     else if (section === 'library') cleanup = await libraryPage(app, a || 'hardware', b);
     else if (section === 'hardware') cleanup = await hardwareEditor(app, a);
     else if (section === 'settings') cleanup = await settingsPage(app);
-    else location.hash = '#/orders';
+    else if (section === 'deals') cleanup = await dealsPage(app);
+    else if (section === 'deal') cleanup = await dealPage(app, a);
+    else if (section === 'contacts') cleanup = await contactsPage(app);
+    else if (section === 'contact') cleanup = await contactPage(app, a);
+    else if (section === 'companies') cleanup = await companiesPage(app);
+    else if (section === 'company') cleanup = await companyPage(app, a);
+    else if (section === 'tasks') cleanup = await tasksPage(app);
+    else if (section === 'analytics') cleanup = await analyticsPage(app);
+    else if (section === 'crm-settings') cleanup = await crmSettingsPage(app, a);
+    else location.hash = '#/deals';
   } catch (e) {
     console.error(e);
     app.appendChild(h('div.page', h('div.msg.err', 'Ошибка: ' + e.message)));
@@ -56,6 +69,10 @@ async function settingsPage(root) {
         f('Телефон', 'phone'), f('E-mail', 'email'), f('Адрес / сайт', 'address'),
         field('Логотип', logoBox)),
       h('div.card.card-pad.col',
+        h('h2', 'CRM'),
+        h('p.muted', 'Воронки и этапы, правила автоматизации, каналы (сайт, телефония, Telegram, почта, WhatsApp через провайдера), сотрудники.'),
+        h('div.row', ...[['pipelines', 'Воронки'], ['automations', 'Автоматизация'], ['channels', 'Каналы'], ['users', 'Сотрудники']].map(([k, l]) => h('a.btn', { href: '#/crm-settings/' + k }, l)))),
+      h('div.card.card-pad.col',
         h('h2', 'Система'),
         h('div.readout', h('span', 'Версия приложения'), h('b', ver.version), h('span', 'Версия схемы БД'), h('b', String(ver.schema)),
           h('span', 'Папка данных'), h('b', ver.data_dir)),
@@ -66,6 +83,28 @@ async function settingsPage(root) {
         h('p.muted.small', 'Перед каждым обновлением и миграцией копия БД создаётся автоматически.')))));
 }
 
-window.addEventListener('hashchange', route);
+async function refreshTop() {
+  try {
+    const sum = await api.get('/api/crm/summary', { silent: true });
+    const el = document.getElementById('nav-tasks');
+    el.textContent = sum.tasks_overdue ? String(sum.tasks_overdue) : (sum.tasks_today ? String(sum.tasks_today) : '');
+    el.className = 'nav-count' + (sum.tasks_overdue ? ' red' : '');
+    el.title = `Просрочено: ${sum.tasks_overdue}, на сегодня: ${sum.tasks_today}`;
+  } catch (_) { /* */ }
+}
+async function initMe() {
+  const sel = document.getElementById('me');
+  const users = (await crmUsers(true)).filter((u) => u.active);
+  if (!currentUser() && users[0]) setCurrentUser(users[0].id);
+  sel.innerHTML = '';
+  for (const u of users) sel.appendChild(h('option', { value: u.id }, '👤 ' + u.name));
+  sel.value = currentUser();
+  sel.onchange = () => { setCurrentUser(sel.value); route(); };
+}
+
+window.addEventListener('hashchange', () => { route(); refreshTop(); });
+initMe().catch(() => {});
+refreshTop();
+setInterval(refreshTop, 60000);
 api.get('/api/version', { silent: true }).then((v) => { document.getElementById('version').textContent = 'v' + v.version; }).catch(() => {});
 route();

@@ -9,13 +9,17 @@
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="#/orders"><span class="logo-mark"></span>GlassCAD</a>
+    <a class="brand" href="#/deals"><span class="logo-mark"></span>GlassCAD</a>
     <nav>
+      <a href="#/deals" data-nav="deals">Сделки</a>
+      <a href="#/tasks" data-nav="tasks">Задачи <span id="nav-tasks" class="nav-count"></span></a>
+      <a href="#/contacts" data-nav="contacts">Контакты</a>
       <a href="#/orders" data-nav="orders">Заказы</a>
+      <a href="#/analytics" data-nav="analytics">Аналитика</a>
       <a href="#/library/hardware" data-nav="library">Библиотека</a>
       <a href="#/settings" data-nav="settings">Настройки</a>
     </nav>
-    <div class="topbar-right"><span id="save-state"></span><span id="version" class="muted"></span></div>
+    <div class="topbar-right"><span id="save-state"></span><select id="me" title="Кто работает за этим компьютером"></select><span id="version" class="muted"></span></div>
   </header>
   <main id="app"></main>
   <div id="toasts"></div>

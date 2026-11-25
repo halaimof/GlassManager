@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -10,6 +11,9 @@ from fastapi.staticfiles import StaticFiles
 
 from . import VERSION
 from .api import library, orders, products, system
+from .crm import api as crm_api
+from .crm.channels import Poller
+from .crm.seed import seed_crm
 from .config import HOST, PORT, STATIC_DIR, ensure_dirs
 from .db import migrate
 from .seed import seed
@@ -23,12 +27,19 @@ def startup() -> None:
     if applied:
         log.info("Применены миграции: %s", applied)
     seed()
+    seed_crm()
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     startup()
+    poller = None
+    if not os.environ.get("GLASSCAD_NO_POLLER"):
+        poller = Poller()
+        poller.start()
     yield
+    if poller:
+        poller.stop_event.set()
 
 
 app = FastAPI(title="GlassCAD", version=VERSION, lifespan=lifespan)
@@ -36,6 +47,8 @@ app.include_router(orders.router)
 app.include_router(products.router)
 app.include_router(library.router)
 app.include_router(system.router)
+app.include_router(crm_api.router)
+app.include_router(crm_api.inbound)
 
 
 @app.exception_handler(ValueError)

@@ -2,6 +2,7 @@ import { toast } from './ui.js';
 
 async function request(method, url, body, { silent = false } = {}) {
   const opts = { method, headers: {} };
+  try { const u = localStorage.getItem('gc-user'); if (u) opts.headers['X-GC-User'] = u; } catch (_) { /* */ }
   if (body instanceof FormData) opts.body = body;
   else if (body !== undefined) { opts.body = JSON.stringify(body); opts.headers['Content-Type'] = 'application/json'; }
   let res;

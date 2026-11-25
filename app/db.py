@@ -96,6 +96,77 @@ MIGRATIONS: list[tuple[int, str, str | Callable[[sqlite3.Connection], None]]] = 
             value TEXT NOT NULL
         );
     """),
+    (2, "CRM: сделки, контакты, компании, задачи, лента, автоматизация, каналы", """
+        CREATE TABLE crm_users(
+            id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', color TEXT NOT NULL DEFAULT '#1f6f8b',
+            active INTEGER NOT NULL DEFAULT 1, data TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+        CREATE TABLE companies(
+            id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', phone TEXT NOT NULL DEFAULT '',
+            email TEXT NOT NULL DEFAULT '', address TEXT NOT NULL DEFAULT '', inn TEXT NOT NULL DEFAULT '',
+            comment TEXT NOT NULL DEFAULT '', data TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+        CREATE TABLE contacts(
+            id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', phone TEXT NOT NULL DEFAULT '',
+            phone_norm TEXT NOT NULL DEFAULT '', email TEXT NOT NULL DEFAULT '',
+            company_id TEXT REFERENCES companies(id) ON DELETE SET NULL, position TEXT NOT NULL DEFAULT '',
+            comment TEXT NOT NULL DEFAULT '', data TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+        CREATE INDEX idx_contacts_phone ON contacts(phone_norm);
+        CREATE INDEX idx_contacts_email ON contacts(email);
+        CREATE TABLE pipelines(
+            id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', position INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+        CREATE TABLE stages(
+            id TEXT PRIMARY KEY, pipeline_id TEXT NOT NULL REFERENCES pipelines(id) ON DELETE CASCADE,
+            name TEXT NOT NULL DEFAULT '', color TEXT NOT NULL DEFAULT '#cfe3ea', position INTEGER NOT NULL DEFAULT 0,
+            kind TEXT NOT NULL DEFAULT 'open', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+        CREATE TABLE deals(
+            id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', pipeline_id TEXT, stage_id TEXT,
+            amount REAL NOT NULL DEFAULT 0, contact_id TEXT REFERENCES contacts(id) ON DELETE SET NULL,
+            company_id TEXT REFERENCES companies(id) ON DELETE SET NULL,
+            order_id TEXT REFERENCES orders(id) ON DELETE SET NULL,
+            responsible_id TEXT, source TEXT NOT NULL DEFAULT '', tags TEXT NOT NULL DEFAULT '',
+            comment TEXT NOT NULL DEFAULT '', closed_at TEXT, stage_changed_at TEXT,
+            data TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+        CREATE INDEX idx_deals_stage ON deals(stage_id);
+        CREATE INDEX idx_deals_contact ON deals(contact_id);
+        CREATE INDEX idx_deals_order ON deals(order_id);
+        CREATE TABLE tasks(
+            id TEXT PRIMARY KEY, text TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL DEFAULT 'call',
+            due_at TEXT, done INTEGER NOT NULL DEFAULT 0, done_at TEXT, result TEXT NOT NULL DEFAULT '',
+            deal_id TEXT REFERENCES deals(id) ON DELETE CASCADE,
+            contact_id TEXT REFERENCES contacts(id) ON DELETE CASCADE,
+            responsible_id TEXT, data TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+        CREATE INDEX idx_tasks_due ON tasks(done, due_at);
+        CREATE TABLE events(
+            id TEXT PRIMARY KEY, deal_id TEXT REFERENCES deals(id) ON DELETE CASCADE,
+            contact_id TEXT REFERENCES contacts(id) ON DELETE CASCADE,
+            kind TEXT NOT NULL DEFAULT 'note', text TEXT NOT NULL DEFAULT '', data TEXT NOT NULL DEFAULT '{}',
+            author TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
+        );
+        CREATE INDEX idx_events_deal ON events(deal_id, created_at);
+        CREATE INDEX idx_events_contact ON events(contact_id, created_at);
+        CREATE TABLE automations(
+            id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1,
+            trigger TEXT NOT NULL DEFAULT 'stage_enter', stage_id TEXT, data TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+        CREATE TABLE channels(
+            id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL DEFAULT 'form',
+            active INTEGER NOT NULL DEFAULT 1, token TEXT NOT NULL DEFAULT '',
+            data TEXT NOT NULL DEFAULT '{}', state TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        )
+    """),
 ]
 
 
