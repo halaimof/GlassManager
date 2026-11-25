@@ -1,5 +1,5 @@
 import { api } from './api.js';
-import { h, clear, field, textInput, toast } from './ui.js';
+import { h, clear, field, textInput, toast, closeAllModals } from './ui.js';
 import { ordersPage, orderPage } from './orders.js';
 import { constructorPage } from './constructor.js';
 import { libraryPage } from './library.js';
@@ -19,6 +19,7 @@ async function route() {
   const [section, a, b] = hash.split('/');
   const alias = { hardware: 'library', order: 'orders', product: 'orders', deal: 'deals', contact: 'contacts', company: 'contacts', companies: 'contacts', 'crm-settings': 'settings' };
   document.querySelectorAll('[data-nav]').forEach((el) => el.classList.toggle('active', el.dataset.nav === (alias[section] || section)));
+  closeAllModals();
   clear(app);
   document.getElementById('save-state').textContent = '';
   try {
@@ -102,8 +103,11 @@ async function initMe() {
   sel.onchange = () => { setCurrentUser(sel.value); route(); };
 }
 
+// ошибки API уже показаны пользователем уведомлением — не дублируем их как «необработанные»
+window.addEventListener('unhandledrejection', (e) => { if (e.reason && e.reason.shown) e.preventDefault(); });
 window.addEventListener('hashchange', () => { route(); refreshTop(); });
 initMe().catch(() => {});
+window.addEventListener('gc-users-changed', () => { initMe().catch(() => {}); });
 refreshTop();
 setInterval(refreshTop, 60000);
 api.get('/api/version', { silent: true }).then((v) => { document.getElementById('version').textContent = 'v' + v.version; }).catch(() => {});

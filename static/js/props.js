@@ -100,7 +100,6 @@ function glassProps(ctx, id) {
   if (!p) return productProps(ctx);
   const set = (fn) => change((d) => { fn(d.panels.find((x) => x.id === id), d); });
   const wm = p.width.mode;
-  const shape = p.shape || { type: 'rect' };
   const others = data.panels.filter((x) => x.id !== id);
   const ops = data.operations.filter((o) => o.panel_id === id);
   const profOpts = lists.profiles.map((pr) => [pr.id, `${pr.name} (−${fmt(pr.deduction)})`]);

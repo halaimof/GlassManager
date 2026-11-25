@@ -361,7 +361,7 @@ def _paged_table(doc: Doc, title, subtitle, columns, rows, empty_text):
             first = False
     for ci, chunk in enumerate(chunks):
         def page(c, sz, chunk=chunk, ci=ci):
-            y = doc.header(c, sz, title + (f" (продолжение)" if ci else ""), subtitle)
+            y = doc.header(c, sz, title + (" (продолжение)" if ci else ""), subtitle)
             if not chunk:
                 c.setFont(doc.F, 10)
                 c.setFillColor(MUTED)

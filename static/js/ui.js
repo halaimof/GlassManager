@@ -62,9 +62,17 @@ export function toast(msg, kind = 'info', ms = 3200) {
 }
 
 // ---------------------------------------------------------------- модальные окна
+const openModals = new Set();
+export function closeAllModals() { for (const c of [...openModals]) c(); }
+
 export function modal(title, body, { actions = [], wide = false, onClose } = {}) {
   const back = h('div.modal-back');
-  const close = () => { back.remove(); document.removeEventListener('keydown', onKey); onClose && onClose(); };
+  const close = () => {
+    if (!openModals.has(close)) return;
+    openModals.delete(close);
+    back.remove(); document.removeEventListener('keydown', onKey); onClose && onClose();
+  };
+  openModals.add(close);
   const onKey = (e) => { if (e.key === 'Escape') close(); };
   document.addEventListener('keydown', onKey);
   const foot = h('div.modal-foot');
@@ -173,15 +181,38 @@ export function segmented(options, value, onChange) {
   return wrap;
 }
 
+// Одно открытое меню на страницу; позиционируется поверх (fixed), поэтому не обрезается
+// прокручиваемыми таблицами. Один общий обработчик закрытия — без утечек при перерисовке.
+let openMenu = null;
+function closeMenu() { if (openMenu) { openMenu.classList.remove('open'); openMenu = null; } }
+document.addEventListener('click', closeMenu);
+window.addEventListener('resize', closeMenu);
+window.addEventListener('scroll', (e) => { if (openMenu && !openMenu.contains(e.target)) closeMenu(); }, true);
+
 export function menuButton(label, items, cls = '') {
   const wrap = h('div.menu-wrap');
   const menu = h('div.menu');
   for (const it of items) {
     if (it === '-') { menu.appendChild(h('div.menu-sep')); continue; }
-    menu.appendChild(h('button', { onclick: () => { wrap.classList.remove('open'); it.onClick(); } }, it.label));
+    menu.appendChild(h('button', { onclick: (e) => { e.stopPropagation(); closeMenu(); it.onClick(); } }, it.label));
   }
-  const btn = h('button.btn' + cls, { type: 'button', onclick: (e) => { e.stopPropagation(); wrap.classList.toggle('open'); } }, label, ' ▾');
-  document.addEventListener('click', () => wrap.classList.remove('open'));
+  const btn = h('button.btn' + cls, {
+    type: 'button',
+    onclick: (e) => {
+      e.stopPropagation();
+      const was = openMenu === wrap;
+      closeMenu();
+      if (was) return;
+      wrap.classList.add('open');
+      openMenu = wrap;
+      const r = btn.getBoundingClientRect();
+      const mw = menu.offsetWidth, mh = menu.offsetHeight;
+      const left = Math.max(8, Math.min(r.right - mw, window.innerWidth - mw - 8));
+      let top = r.bottom + 4;
+      if (top + mh > window.innerHeight - 8) top = Math.max(8, r.top - mh - 4);
+      Object.assign(menu.style, { position: 'fixed', left: left + 'px', top: top + 'px', right: 'auto' });
+    },
+  }, label, ' ▾');
   wrap.append(btn, menu);
   return wrap;
 }

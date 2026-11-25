@@ -333,3 +333,12 @@ svg.dxf .anchor { stroke: #1f6fd1; fill: none; }
 }
 
 .page-head select, .page-head input[type=date], .page-head input[type=search] { width: auto; }
+
+/* узкие экраны: широкие таблицы прокручиваются внутри карточки */
+@media (max-width: 820px) {
+  .card:has(> table.list), .card-pad:has(table.list) { overflow-x: auto; }
+  table.list th, table.list td { white-space: nowrap; }
+  .an-grid > * { min-width: 0; }
+  .page-head { gap: 8px; }
+  .page-head .right { margin-left: 0; }
+}

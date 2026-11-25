@@ -112,7 +112,7 @@ export async function newDealDialog(preset = {}, onCreated) {
           source: v.source, contact_id: v.contact_id, company_id: v.company_id };
         if (!v.contact_id && (v.nc.name || v.nc.phone || v.nc.email)) body.new_contact = v.nc;
         const d = await api.post('/api/crm/deals', body);
-        if (onCreated) onCreated(d); else location.hash = '#/deal/' + d.id;
+        if (onCreated) { toast(`Сделка «${d.name}» создана`, 'ok'); onCreated(d); } else location.hash = '#/deal/' + d.id;
       },
     }],
   });

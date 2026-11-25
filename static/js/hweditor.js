@@ -52,14 +52,15 @@ export async function hardwareEditor(root, id) {
 
   // ---------------------------------------------------------------- левая панель
   function renderLeft() {
-    const d = st.d, sd = side();
+    const d = st.d, realSd = side(), sd = realSd || { roles: {}, holes: [] };
     const prims = st.dxf ? st.dxf.data.primitives : [];
     const roleOf = (p) => (sd.roles || {})[p.id] || 'op';
     const nOp = prims.filter((p) => roleOf(p) === 'op' && p.id !== sd.edge_pid).length;
     const nAux = prims.filter((p) => roleOf(p) === 'aux').length;
     const edgePrim = prims.find((p) => p.id === sd.edge_pid);
     const vertical = edgePrim ? (() => { const sg = edgePrim.segs[0]; return Math.abs(sg.p2[1] - sg.p1[1]) >= Math.abs(sg.p2[0] - sg.p1[0]); })() : true;
-    const steps = [
+    const steps = !realSd ? [['Модель создана', true], ['Производитель указан', !!d.manufacturer_id],
+      ['Сторон нет — модель только в спецификации (обработку можно добавить кнопкой «+ Сторона»)', true], ['Сохранено', !st.dirty]] : [
       ['Модель создана', true], ['Производитель указан', !!d.manufacturer_id], ['DXF загружен (или заданы отверстия)', !!sd.dxf_id || (sd.holes || []).length > 0],
       ['Рабочие линии выбраны', nOp > 0 || (sd.holes || []).length > 0], ['Вспомогательные помечены', nAux > 0 || !sd.dxf_id], ['Край стекла указан', !!sd.edge_pid || !sd.dxf_id],
       ['Точка привязки задана', !!sd.anchor || !sd.dxf_id], ['Сохранено', !st.dirty],
@@ -83,7 +84,7 @@ export async function hardwareEditor(root, id) {
           st.side = d.sides.length - 1; markDirty(); loadDxf().then(renderLeft);
         } }, '+ Сторона')),
         d.sides.length ? h('div.segmented', d.sides.map((x, i) => h('button' + (i === st.side ? '.on' : ''), { onclick: () => { st.side = i; loadDxf().then(renderLeft); } }, 'Сторона ' + x.key))) : h('span.hint', 'Без сторон модель попадает только в спецификацию.'),
-        sd ? h('div.col',
+        realSd ? h('div.col',
           h('div.grid2',
             field('Назначение стороны', textInput(sd.label, (v) => { sd.label = v; markDirty(); }), 'напр. «Глухарь» / «Дверь»'),
             h('div.field', h('span.field-label', ' '), h('button.btn.sm.danger', { onclick: async () => { if (await confirmDlg(`Удалить сторону ${sd.key}?`)) { d.sides.splice(st.side, 1); st.side = 0; markDirty(); loadDxf().then(renderLeft); } } }, 'Удалить сторону'))),
@@ -287,6 +288,7 @@ export async function hardwareEditor(root, id) {
 
   // ---------------------------------------------------------------- проверка на тестовом стекле
   async function testPlacement() {
+    if (!st.d.sides.length) { toast('У модели нет сторон с обработкой — проверять на стекле нечего', 'info'); return; }
     if (st.dirty) await save();
     const sides = st.d.sides;
     const panels = (sides.length ? sides : [{ key: 'A' }]).slice(0, 3).map((sd, i) => ({

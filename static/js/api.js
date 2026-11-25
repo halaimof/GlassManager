@@ -14,7 +14,9 @@ async function request(method, url, body, { silent = false } = {}) {
     let msg = res.statusText;
     try { const j = await res.json(); msg = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail); } catch (_) { /* */ }
     if (!silent) toast(msg, 'error', 5000);
-    throw new Error(msg);
+    const err = new Error(msg);
+    err.shown = !silent; // пользователь уже видит сообщение
+    throw err;
   }
   const ct = res.headers.get('content-type') || '';
   return ct.includes('json') ? res.json() : res;

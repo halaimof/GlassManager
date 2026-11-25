@@ -335,6 +335,8 @@ class Poller(threading.Thread):
             try:
                 with session() as c:
                     chans = [ch for ch in active_channels(c) if ch["kind"] in ("telegram", "email")]
+                # ещё не настроенные каналы не опрашиваем (иначе журнал засоряется ошибками)
+                chans = [ch for ch in chans if (ch["data"] or {}).get("bot_token" if ch["kind"] == "telegram" else "imap_host")]
                 for ch in chans:
                     interval = 15 if ch["kind"] == "telegram" else max(30, int((ch["data"] or {}).get("poll_seconds") or 120))
                     if time.time() - self.last.get(ch["id"], 0) < interval:

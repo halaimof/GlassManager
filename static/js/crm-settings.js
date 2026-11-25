@@ -202,6 +202,7 @@ async function channelsTab(body) {
 async function usersTab(body) {
   const load = async () => {
     const users = await crmUsers(true);
+    window.dispatchEvent(new Event('gc-users-changed'));
     const me = currentUser();
     clear(body, h('div.row', { style: { marginBottom: '12px' } },
       h('span.muted', 'Сотрудник, выбранный «Это я», подставляется ответственным и автором записей в ленте на этом компьютере.'),
