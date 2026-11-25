@@ -56,6 +56,17 @@ async def value_error_handler(_request: Request, exc: ValueError):
     return JSONResponse({"detail": str(exc)}, status_code=400)
 
 
+@app.middleware("http")
+async def no_stale_frontend(request: Request, call_next):
+    """Браузер всегда сверяет файлы интерфейса с сервером (ETag → 304, это дёшево).
+    Без этого после обновления браузер мог смешать старые и новые JS-модули."""
+    response = await call_next(request)
+    path = request.url.path
+    if path == "/" or path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 

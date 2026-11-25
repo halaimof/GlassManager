@@ -60,3 +60,12 @@ def test_full_flow():
         assert c.get(f"/api/lib/manufacturers/{m['id']}").json()["name"] == "Vetro Glass"
         assert c.post(f"/api/lib/manufacturers/{m['id']}/duplicate").status_code == 200
         assert c.delete(f"/api/lib/manufacturers/{m['id']}").json()["ok"]
+
+
+def test_frontend_not_cached_stale():
+    with TestClient(app) as c:
+        for url in ("/", "/static/js/main.js", "/static/js/ui.js", "/static/css/app.css"):
+            r = c.get(url)
+            assert r.status_code == 200
+            assert r.headers["cache-control"] == "no-cache"
+        assert c.get("/static/js/ui.js").headers.get("etag")
