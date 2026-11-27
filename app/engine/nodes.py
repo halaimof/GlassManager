@@ -8,9 +8,7 @@ from __future__ import annotations
 
 import math
 
-from shapely.geometry import Point, Polygon
-
-from .dims import fmt, glass_features
+from .dims import fmt
 
 EDGE_RU = {"left": "левая кромка", "right": "правая кромка", "top": "верхняя кромка", "bottom": "нижняя кромка"}
 REF_RU = {"top": "от верха", "bottom": "от низа", "center": "от центра", "left": "от левого края", "right": "от правого края"}
@@ -58,38 +56,89 @@ def _view(g: dict, mark_bbox, edge: str) -> dict:
     holes = [hl for hl in g.get("holes", []) if inside(*hl["c"])]
     vertical = edge in ("left", "right")
     e = (w if edge == "right" else 0.0) if vertical else (hh if edge == "top" else 0.0)
-    perp, along = [], []  # координаты поперёк кромки и вдоль неё
-    # те же точки, что и на листе детали: центры отверстий, концы проёма выреза на кромке, глубина выреза
-    for x, y, ux, uy in glass_features(g):
-        if not inside(x, y):
-            continue
-        px_, pu = (x, ux) if vertical else (y, uy)
-        ax_, au = (y, uy) if vertical else (x, ux)
-        if pu and abs(px_ - e) > 0.05:
-            perp.append(px_)
-        if au:
-            along.append(ax_)
-    dims: list[dict] = []
-    ps = _uniq([e] + perp)
-    for a, b in zip(ps, ps[1:]):
+    far_side = {"right": "left", "left": "right", "top": "bottom", "bottom": "top"}[edge]
+
+    def P(v):   # координата поперёк кромки
+        return v[0] if vertical else v[1]
+
+    def A(v):   # координата вдоль кромки
+        return v[1] if vertical else v[0]
+
+    def lin_perp(a, b, side, level):
         if vertical:
-            dims.append({"t": "lin", "dir": "h", "p1": [a, win[3]], "p2": [b, win[3]], "side": "top", "level": 1, "text": fmt(b - a)})
-        else:
-            dims.append({"t": "lin", "dir": "v", "p1": [win[2], a], "p2": [win[2], b], "side": "right", "level": 1, "text": fmt(b - a)})
+            return {"t": "lin", "dir": "h", "p1": [a, win[3]], "p2": [b, win[3]], "side": side, "level": level, "text": fmt(abs(b - a))}
+        return {"t": "lin", "dir": "v", "p1": [win[2], a], "p2": [win[2], b], "side": side, "level": level, "text": fmt(abs(b - a))}
+
+    def lin_along(a, b, side, level):
+        if vertical:
+            return {"t": "lin", "dir": "v", "p1": [e, a], "p2": [e, b], "side": side, "level": level, "text": fmt(abs(b - a))}
+        return {"t": "lin", "dir": "h", "p1": [a, e], "p2": [b, e], "side": side, "level": level, "text": fmt(abs(b - a))}
+
+    perp_side = "top" if vertical else "right"
+    dims: list[dict] = []
+    # 1) отверстия и внутренние контуры — цепочками от кромки
+    perp, along = [], []
+    for hl in holes:
+        perp.append(P(hl["c"]))
+        along.append(A(hl["c"]))
+    for chain in g.get("inner", []):
+        pts = [pt for s_ in chain for pt in ((s_["p1"], s_["p2"]) if s_["t"] == "line" else (s_["c"],))]
+        if pts and inside(*pts[0]):
+            perp += [P(pt) for pt in pts]
+            along += [A(pt) for pt in pts]
+    ps = _uniq([e] + [v for v in perp if abs(v - e) > 0.05])
+    for a, b in zip(ps, ps[1:]):
+        dims.append(lin_perp(a, b, perp_side, 1))
     al = _uniq(along)
     for a, b in zip(al, al[1:]):
-        if vertical:
-            dims.append({"t": "lin", "dir": "v", "p1": [e, a], "p2": [e, b], "side": edge, "level": 1, "text": fmt(b - a)})
-        else:
-            dims.append({"t": "lin", "dir": "h", "p1": [a, e], "p2": [b, e], "side": edge, "level": 1, "text": fmt(b - a)})
+        dims.append(lin_along(a, b, edge, 1))
+    lv_perp = 2 if len(ps) > 1 else 1
+    lv_edge = 2 if len(al) > 1 else 1
+    lv_far = 1
+
+    # 2) вырезы на кромке — чертёж самого выреза: проём, глубины от кромки, прямые стенки, радиусы
+    cont = g["contour"]
+    for cf in g.get("cut_feats", []):
+        if not cf.get("open"):
+            continue
+        x0, y0, x1, y1 = cf["bbox"]
+        if not (x1 >= win[0] and x0 <= win[2] and y1 >= win[1] and y0 <= win[3]):
+            continue
+        (oa, ob) = cf["open"]
+        dims.append(lin_along(A(oa), A(ob), edge, lv_edge))           # проём на кромке
+        lv_edge += 1
+
+        def in_box(v, t=0.05):
+            return x0 - t <= v[0] <= x1 + t and y0 - t <= v[1] <= y1 + t
+        depths, walls = [], []
+        for i, (vx, vy, b) in enumerate(cont):
+            nx_, ny_, _ = cont[(i + 1) % len(cont)]
+            pa, pb = (vx, vy), (nx_, ny_)
+            if not (in_box(pa) and in_box(pb)):
+                continue
+            if abs(P(pa) - e) < 0.05 and abs(P(pb) - e) < 0.05:
+                continue  # участок самой кромки
+            depths += [P(pa), P(pb)]
+            if abs(b) > 1e-9:
+                c, _r = _arc_center(pa, pb, b)
+                if c is not None:
+                    depths.append(P(c))
+            elif abs(P(pa) - P(pb)) < 0.05 and abs(A(pa) - A(pb)) > 0.05:
+                walls.append((A(pa), A(pb), P(pa)))                      # прямая стенка вдоль кромки
+        for d_ in sorted(_uniq([v for v in depths if abs(v - e) > 0.05]), key=lambda v: abs(v - e)):
+            dims.append(lin_perp(e, d_, perp_side, lv_perp))           # глубины — каждая от кромки
+            lv_perp += 1
+        for a, b, _pp in walls:
+            dims.append(lin_along(a, b, far_side, lv_far))
+            lv_far += 1
     seen = set()
     for hl in holes:
         key = (round(hl["c"][0], 2), round(hl["c"][1], 2))
         if key not in seen:
             seen.add(key)
             dims.append({"t": "dia", "c": hl["c"], "r": hl["r"], "text": "Ø" + fmt(hl["r"] * 2)})
-    # радиусы выреза: подпись в центре дуги, если он вне стекла (вогнутая дуга выреза)
-    glass_poly = Polygon([(x, y) for x, y, _b in g["contour"]])
+    # радиусы выреза: подпись в центре вогнутой дуги (контур стекла обходится против часовой,
+    # дуга по часовой — bulge < 0 — вогнута, её центр лежит в вырезе, вне стекла)
     radii = set()
     cont = g["contour"]
     for i, (px, py, b) in enumerate(cont):
@@ -97,7 +146,7 @@ def _view(g: dict, mark_bbox, edge: str) -> dict:
             continue
         qx, qy, _ = cont[(i + 1) % len(cont)]
         c, r = _arc_center((px, py), (qx, qy), b)
-        if c is None or not inside(*c) or glass_poly.contains(Point(c)):
+        if c is None or b > 0 or not inside(*c):
             continue
         key = (round(c[0], 1), round(c[1], 1), round(r, 2))
         if key in radii:

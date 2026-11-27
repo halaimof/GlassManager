@@ -359,3 +359,31 @@ def test_notch_with_relief_ears_dims_to_edge_opening():
     assert texts == ["400", "63", "537"]          # снизу: до проёма, проём на кромке, до верха
     top = [d["text"] for d in glass_dims(g) if d["t"] == "lin" and d["side"] == "top"]
     assert top == ["457", "43"]                   # глубина — до самой глубокой точки (с ушками)
+
+
+def _ear_notch_segs():
+    """Вырез на правой кромке x=500: проём y 400..464, «ушки» R10 с центрами на стенке x=459."""
+    return [
+        {"t": "line", "p1": [510, 464], "p2": [469, 464]},
+        {"t": "arc", "c": [459, 464], "r": 10, "a0": 0, "a1": 270},
+        {"t": "line", "p1": [459, 454], "p2": [459, 410]},
+        {"t": "arc", "c": [459, 400], "r": 10, "a0": 90, "a1": 0},
+        {"t": "line", "p1": [469, 400], "p2": [510, 400]},
+        {"t": "line", "p1": [510, 400], "p2": [510, 464]},
+    ]
+
+
+def test_node_view_dimensions_the_cutout_itself():
+    from app.engine.nodes import _view
+
+    outline = [(0, 0), (500, 0), (500, 1000), (0, 1000)]
+    r = build_contour(outline, _ear_notch_segs())
+    g = {"w": 500, "h": 1000, "outline": outline, "shape_type": "rect", **r}
+    v = _view(g, [449, 390, 500, 474], "right")
+    texts = [d.get("text") for d in v["dims"]]
+    assert "64" in texts            # проём на кромке
+    assert "31" in texts and "41" in texts   # глубины от кромки: начало дуги, центр/стенка
+    assert "44" in texts            # прямая стенка между дугами
+    assert "R10" in texts
+    perp = [d for d in v["dims"] if d["t"] == "lin" and d["side"] == "top"]
+    assert all(min(d["p1"][0], d["p2"][0]) < 500 and max(d["p1"][0], d["p2"][0]) == 500 for d in perp)  # каждая — от кромки
