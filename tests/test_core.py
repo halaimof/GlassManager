@@ -300,3 +300,43 @@ def test_dimension_layout_outside_and_without_overlaps():
                 overlap = min(a[2], b[2]) - max(a[0], b[0]) > 0.5 and min(a[3], b[3]) - max(a[1], b[1]) > 0.5
                 assert not overlap, (ta, a, tb, b)
         assert ops_extent(ops, th)
+
+
+def _corner_lib():
+    con = {"id": "con", "name": "21-062", "data": {"connection": "glass-glass", "sides": [
+        {"key": "A", "label": "Стекло 1", "cutouts": [{"u": 0, "depth": 24, "h": 20, "r": 10}]},
+        {"key": "B", "label": "Стекло 2", "edge_deduction": 12}]}}
+    kit = {"id": "k", "items": [{"model_id": "con", "placement": "corner",
+                                 "positions": [{"ref": "top", "offset": 150}, {"ref": "bottom", "offset": 150}]}]}
+    return Library({"hardware": {"con": con}}), kit
+
+
+def test_corner_connector_parametric_cutout_and_deduction():
+    lib, kit = _corner_lib()
+    data = tmpl("corner")
+    data["measurement"]["depth"] = 900
+    data = apply_kit(data, kit, lib)
+    assert len(data["hardware"]) == 2
+    data["settings"]["node_details"] = True
+    res = resolve(data, lib)
+    front = [g for g in res["glasses"] if g["plane"] == "front"][-1]
+    side = [g for g in res["glasses"] if g["plane"] == "side"][0]
+    assert side["w"] == pytest.approx(900 - 12)               # вычет стороны B на угловой кромке
+    assert len(front["cut_boxes"]) == 2
+    x0, y0, x1, y1 = front["cut_boxes"][0]
+    assert (x1 - x0, y1 - y0) == (pytest.approx(24), pytest.approx(20))
+    assert (y0 + y1) / 2 == pytest.approx(150)                 # центр выреза — на оси узла
+    # полукруг R10 сохранён дугами (не ломаной): суммарно 180° на каждый вырез
+    import math as _m
+    sweep = sum(4 * _m.degrees(_m.atan(abs(v[2]))) for v in front["contour"] if abs(v[2]) > 1e-9)
+    assert sweep == pytest.approx(360, abs=0.01)
+    nodes = res["nodes"]
+    assert len(nodes) == 1 and nodes[0]["qty"] == 2 and len(nodes[0]["positions"]) == 2
+    texts = {d.get("text") for d in nodes[0]["views"][0]["dims"]}
+    assert {"24", "20", "R10"} <= texts
+
+
+def test_node_details_off_by_default():
+    lib, kit = _corner_lib()
+    data = apply_kit(tmpl("corner"), kit, lib)
+    assert resolve(data, lib)["nodes"] == []

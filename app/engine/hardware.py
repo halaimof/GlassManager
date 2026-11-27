@@ -143,6 +143,30 @@ def side_segments(side: dict, lib: Library) -> list[dict]:
     return out
 
 
+def side_cutouts(side: dict, P, D, N) -> list[dict]:
+    """Параметрические вырезы стороны узла (без DXF): вырез от кромки внутрь стекла.
+    u — центр выреза вдоль кромки от точки привязки, depth — глубина от кромки,
+    h — размер вдоль кромки, r — радиус внутренних углов (r = h/2 — полукруглый U-вырез)."""
+    from .operations import rect_cut_segments  # локальный импорт: избегаем цикла
+
+    out = []
+    det = D[0] * N[1] - D[1] * N[0]
+    for cut in side.get("cutouts") or []:
+        depth, hh = float(cut.get("depth") or 0), float(cut.get("h") or 0)
+        if depth <= 0 or hh <= 0:
+            continue
+        u = float(cut.get("u") or 0)
+        r = float(cut.get("r") or 0)
+        ext = r + 2.0  # за кромку — без «рожек» стекла
+        # в координатах (u — вдоль кромки, v — внутрь стекла)
+        local = rect_cut_segments(u, (depth - ext) / 2, hh, depth + ext, r)
+
+        def fn(p, P=P, D=D, N=N):
+            return (P[0] + p[0] * D[0] + p[1] * N[0], P[1] + p[0] * D[1] + p[1] * N[1])
+        out += [transform_seg(sg, fn, det < 0) for sg in local]
+    return out
+
+
 def apply_hardware(inst: dict, model: dict, glasses: dict[str, dict], lib: Library,
                    axes: dict[str, float], warnings: list[str]) -> dict[str, list[dict]]:
     """Возвращает {glass_id: [сегменты]} для одного установленного узла."""
@@ -193,6 +217,7 @@ def apply_hardware(inst: dict, model: dict, glasses: dict[str, dict], lib: Libra
             u, v = float(hole.get("u") or 0), float(hole.get("v") or 0)
             c = (P[0] + u * D[0] + v * N[0], P[1] + u * D[1] + v * N[1])
             segs.append({"t": "circle", "c": [c[0], c[1]], "r": dmt / 2})
+        segs += side_cutouts(side, P, D, N)
         for s in segs:
             s["src"] = inst["id"]
         result.setdefault(g["id"], []).extend(segs)

@@ -156,6 +156,11 @@ def layout_dims(dims: list[dict], bbox: tuple[float, float, float, float], S: fl
             ops.append(("text", (shelf0[0] + sg * th * 0.15, ly + th * 0.2), d["text"], 0, th,
                         "left" if side == "right" else "right"))
 
+    # --- подписи (радиусы выреза и т.п.) — как есть, в указанной точке
+    for d in dims:
+        if d["t"] == "note":
+            ops.append(("text", (d["p"][0], d["p"][1] - th * 0.35), d["text"], 0, th, "center"))
+
     # --- длины сторон фигурного стекла (снаружи, вдоль стороны)
     for d in dims:
         if d["t"] != "aligned":

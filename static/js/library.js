@@ -100,7 +100,7 @@ function columnsFor(coll, L, m) {
   switch (coll) {
     case 'hardware': return [name, { title: 'Производитель', get: (it) => L.manName(it.data.manufacturer_id) }, { title: 'Категория', get: (it) => L.catName(it.data.category_id) },
       { title: 'Артикул', get: (it) => it.data.article || '' }, { title: 'Соединение', get: (it) => m.connection_types[it.data.connection] || '—' },
-      { title: 'Стороны', get: (it) => (it.data.sides || []).map((sd) => sd.key + (sd.dxf_id ? ' (DXF)' : '') + ((sd.holes || []).length ? ` (${sd.holes.length} отв.)` : '')).join(', ') || '—' }];
+      { title: 'Стороны', get: (it) => (it.data.sides || []).map((sd) => sd.key + (sd.dxf_id ? ' (DXF)' : '') + ((sd.holes || []).length ? ` (${sd.holes.length} отв.)` : '') + ((sd.cutouts || []).length ? ` (${sd.cutouts.length} выр.)` : '')).join(', ') || '—' }];
     case 'profiles': return [name, { title: 'Производитель', get: (it) => L.manName(it.data.manufacturer_id) }, { title: 'Цвет', get: (it) => it.data.color || '' },
       { title: 'Глубина / посадка / запас', get: (it) => `${fmt(it.data.depth)} / ${fmt(it.data.seat_depth)} / ${fmt(it.data.mounting_gap)}` }, { title: 'Вычет, мм', num: true, get: (it) => fmt(it.deduction) }];
     case 'kits': return [name, { title: 'Производитель', get: (it) => L.manName(it.data.manufacturer_id) }, { title: 'Цвет', get: (it) => it.data.color || '' },
@@ -151,7 +151,7 @@ const editors = {
     const d = clone(it.data); const n = nameField(it);
     d.gaps = d.gaps || {}; d.profiles = d.profiles || []; d.items = d.items || [];
     const wrap = h('div.col');
-    const PLACEMENTS = [['hinge', 'Петли двери (стекло–стекло или стена)'], ['handle', 'Ручка на двери'], ['wall_connector', 'К стене (неподвижные стекла)'], ['floor', 'К полу (неподвижные стекла)'], ['door_edge', 'На кромку двери'], ['none', 'Только в спецификацию']];
+    const PLACEMENTS = [['hinge', 'Петли двери (стекло–стекло или стена)'], ['handle', 'Ручка на двери'], ['wall_connector', 'К стене (неподвижные стекла)'], ['floor', 'К полу (неподвижные стекла)'], ['door_edge', 'На кромку двери'], ['corner', 'Угол: фронт ↔ боковое стекло'], ['none', 'Только в спецификацию']];
     const posText = (ps) => (ps || []).map((p) => `${{ top: 'верх', bottom: 'низ', center: 'центр', axis: 'ось', left: 'лево', right: 'право' }[p.ref] || p.ref} ${fmt(p.offset)}`).join('; ');
     const parsePos = (t) => t.split(/[;,]/).map((x) => x.trim()).filter(Boolean).map((x) => {
       const [r, v] = x.split(/\s+/);

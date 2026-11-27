@@ -126,6 +126,7 @@ export function layoutDims(dims, bbox, S, th, al) {
       ops.push(['text', [sh0[0] + sg * th * 0.15, ly + th * 0.2], d.text, 0, th, side === 'right' ? 'left' : 'right']);
     }
   }
+  for (const d of dims) if (d.t === 'note') ops.push(['text', [d.p[0], d.p[1] - th * 0.35], d.text, 0, th, 'center']);
   for (const d of dims) {
     if (d.t !== 'aligned') continue;
     const [x1, y1] = d.p1, [x2, y2] = d.p2;

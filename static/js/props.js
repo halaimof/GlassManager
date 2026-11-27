@@ -78,7 +78,9 @@ function productProps(ctx) {
     sec('Фурнитура и чертёж',
       field('Цвет фурнитуры', textInput(st.hardware_color, sset('hardware_color'))),
       field('Габарит высоты на чертеже', segmented([['auto', 'Авто'], ['left', 'Слева'], ['right', 'Справа']], st.dim_side, sset('dim_side')),
-        'Авто — с противоположной стороны от основной фурнитуры')),
+        'Авто — с противоположной стороны от основной фурнитуры'),
+      checkInput(st.node_details, sset('node_details'), 'Чертежи узлов крупным планом (PDF для производства)'),
+      st.node_details ? h('span.hint', `Будет листов узлов: ${(res.nodes || []).length}. Одинаковые узлы на одном стыке объединяются в один лист.`) : null),
     sec('Шаблон и комплект',
       h('div.readout', h('span', 'Конструкция'), h('b', tmpl ? tmpl.name : '—'), h('span', 'Комплект'), h('b', kit ? kit.name : '—')),
       h('div.row', h('button.btn.sm', { onclick: ctx.applyTemplateDlg }, 'Сменить конструкцию…'), h('button.btn.sm', { onclick: ctx.applyKitDlg }, 'Применить комплект…'))));

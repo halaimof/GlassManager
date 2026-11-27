@@ -251,13 +251,19 @@ export async function constructorPage(root, pid) {
       gs.sort((a, b) => a.x - b.x);
       for (let i = 0; i < gs.length - 1; i++) out.push([gs[i], gs[i + 1]]);
     }
+    // углы между плоскостями: последнее стекло фронта ↔ первое бокового
+    const planes = st.res.planes.map((p) => p.key);
+    for (let i = 0; i < planes.length - 1; i++) {
+      const a = byPlane[planes[i]], b = byPlane[planes[i + 1]];
+      if (a && b && a.length && b.length) out.push([a[a.length - 1], b[0], true]);
+    }
     return out;
   }
   function installHardwareDlg() {
     if (!lists.hardware.length) { toast('В базе нет фурнитуры — добавьте модель в Библиотеке', 'error'); return; }
     const catName = (id) => (lists.categories.find((c) => c.id === id) || {}).name || 'Без категории';
     const opts = [...lists.hardware].sort((a, b) => catName(a.data.category_id).localeCompare(catName(b.data.category_id))).map((m) => [m.id, `${catName(m.data.category_id)} — ${m.name}`]);
-    const v = { model_id: opts[0][0], joint: 0, glass: selectedGlassId(), edge: 'right', ref: 'top', offset: 250, swap: false };
+    const v = { model_id: opts[0][0], joint: 0, glass: selectedGlassId(), edge: 'right', ref: 'top', offset: 250, aOn: 'auto' };
     const body = h('div.col');
     const js = joints();
     const render = () => {
@@ -268,8 +274,9 @@ export async function constructorPage(root, pid) {
         field('Модель', selectInput(opts, v.model_id, (x) => { v.model_id = x; render(); })),
         m ? h('div.readout', h('span', 'Тип соединения'), h('b', lists.meta.connection_types[m.data.connection] || '—'), h('span', 'Сторон с обработкой'), h('b', String(sides.length))) : null,
         two ? (js.length ? h('div.col',
-          field('Между стеклами', selectInput(js.map(([a, b], i) => [String(i), `${a.name} | ${b.name}`]), String(v.joint), (x) => { v.joint = +x; })),
-          h('label.check', h('input', { type: 'checkbox', checked: v.swap, onchange: (e) => { v.swap = e.target.checked; } }), h('span', 'Сторону A — на левое стекло (по умолчанию A — на неподвижное)')))
+          field('Между стеклами', selectInput(js.map(([a, b, corner], i) => [String(i), `${a.name} ${corner ? '⌐ угол ⌐' : '|'} ${b.name}`]), String(v.joint), (x) => { v.joint = +x; render(); })),
+          field(`Сторона ${sides[0].key}${sides[0].label ? ' («' + sides[0].label + '»)' : ''} — на стекло`,
+            selectInput([['auto', 'автоматически (неподвижное стекло)'], ['first', js[v.joint][0].name], ['second', js[v.joint][1].name]], v.aOn, (x) => { v.aOn = x; })))
           : h('div.msg.warn', 'Нет соседних стекол для узла стекло–стекло')) :
           h('div.grid2',
             field('Стекло', selectInput(st.data.panels.map((p) => [p.id, p.name]), v.glass, (x) => { v.glass = x; })),
@@ -290,7 +297,7 @@ export async function constructorPage(root, pid) {
             const [a, b] = js[v.joint];
             const isDoor = (g) => g.type === 'door' || g.type === 'sliding_door';
             let A = { panel_id: a.id, edge: 'right' }, B = { panel_id: b.id, edge: 'left' };
-            const aFirst = v.swap ? true : !isDoor(a) || isDoor(b);
+            const aFirst = v.aOn === 'first' ? true : v.aOn === 'second' ? false : !isDoor(a) || isDoor(b);
             if (!aFirst) [A, B] = [B, A];
             targets[sides[0].key] = A; targets[sides[1].key] = B;
           } else if (sides.length) {

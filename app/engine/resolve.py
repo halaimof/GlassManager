@@ -49,6 +49,16 @@ class Ctx:
         self.errors: list[str] = []
         # зазоры/вычеты, задаваемые установленной фурнитурой
         self.hw_joint_gap: dict[tuple[str, str], float] = {}
+        # вычет кромки, заданный стороной узла (например, угловой коннектор: стекло 2 короче на N мм)
+        self.hw_edge_ded: dict[tuple[str, str], float] = {}
+        for inst in data["hardware"]:
+            model = lib.get("hardware", inst.get("model_id"))
+            for side in (model or {}).get("sides") or []:
+                tgt = (inst.get("targets") or {}).get(side.get("key"))
+                ded = side.get("edge_deduction")
+                if tgt and ded not in (None, ""):
+                    key = (tgt.get("panel_id"), tgt.get("edge"))
+                    self.hw_edge_ded[key] = max(self.hw_edge_ded.get(key, 0.0), float(ded))
         for inst in data["hardware"]:
             model = lib.get("hardware", inst.get("model_id"))
             if not model or model.get("joint_gap") in (None, ""):
@@ -64,12 +74,22 @@ class Ctx:
         e = panel["edges"][side]
         if e.get("override") not in (None, ""):
             return float(e["override"])
+        if (panel["id"], side) in self.hw_edge_ded:
+            return self.hw_edge_ded[(panel["id"], side)]
         if (panel["id"], side) in self.hw_joint_gap:
             return self.hw_joint_gap[(panel["id"], side)]
         prof = self.profile(e)
         if prof:
             return profile_deduction(prof)
         return self.gaps.get("wall", 0.0)
+
+    def free_deduction(self, panel: dict, side: str) -> float:
+        """Свободная кромка на конце плоскости (угол, walk-in): вычет только если задан явно —
+        на кромке или стороной установленного узла."""
+        e = panel["edges"][side]
+        if e.get("override") not in (None, ""):
+            return float(e["override"])
+        return self.hw_edge_ded.get((panel["id"], side), 0.0)
 
     def joint_gap(self, left: dict, right: dict) -> float:
         for p, side in ((left, "right"), (right, "left")):
@@ -139,8 +159,8 @@ def layout(data: dict, ctx: Ctx, meas: dict) -> tuple[list[dict], list[dict]]:
         _resolve_side_kinds(plist)
         flow = [p for p in plist if not (p.get("x_formula") or "").strip()]
         first, last = plist[0], plist[-1]
-        dl = ctx.wall_deduction(first, "left") if first["_kind_left"] == "wall" else 0.0
-        dr = ctx.wall_deduction(last, "right") if last["_kind_right"] == "wall" else 0.0
+        dl = ctx.wall_deduction(first, "left") if first["_kind_left"] == "wall" else ctx.free_deduction(first, "left")
+        dr = ctx.wall_deduction(last, "right") if last["_kind_right"] == "wall" else ctx.free_deduction(last, "right")
         gaps = [ctx.joint_gap(a, b) for a, b in zip(flow, flow[1:])]
         A = L - dl - dr - sum(gaps)
         T = float(ctx.settings.get("thickness") or 8)
@@ -353,7 +373,14 @@ def resolve(raw_data: dict, lib: Library) -> dict:
         for k in [k for k in p if k.startswith("_")]:
             p.pop(k)
 
+    nodes = []
+    if s.get("node_details"):
+        from .nodes import node_details  # только когда нужно в PDF
+
+        nodes = node_details(data, {"glasses": glasses, "axes": axes_out}, lib)
+
     return {
+        "nodes": nodes,
         "opening": meas,
         "planes": planes,
         "glasses": glasses,

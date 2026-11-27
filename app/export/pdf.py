@@ -534,6 +534,78 @@ def glass_sheet(doc: Doc, product: dict, res: dict, g: dict, part_no: str):
     doc.add(size, page)
 
 
+def _scale_text(ratio: float) -> str:
+    """ratio — мм листа на мм изделия."""
+    if ratio >= 1:
+        return f"{ratio:.1f}:1".replace(".0:", ":").replace(".", ",")
+    return f"1:{max(1, round(1 / ratio))}"
+
+
+def node_sheet(doc: Doc, product: dict, res: dict, node: dict, prefix: str):
+    """Лист узла: фрагменты стекол вокруг фурнитуры крупным планом."""
+    size = landscape(A4)
+    glasses = {g["id"]: g for g in res["glasses"]}
+
+    def page(c, sz):
+        W, H = sz
+        y = doc.header(c, sz, f"Узел: {node['name']}", f"{product.get('name') or ''} · крупный план")
+        views = node["views"]
+        nv = len(views)
+        gap_x = 10 * mm
+        area_x0, area_x1 = 15 * mm, W - 15 * mm
+        area_y0, area_y1 = 40 * mm, y - 12 * mm
+        bw = (area_x1 - area_x0 - gap_x * (nv - 1)) / nv
+        for i, vw in enumerate(views):
+            g = glasses.get(vw["glass_id"])
+            if not g:
+                continue
+            bx = area_x0 + i * (bw + gap_x)
+            box = (bx, area_y0, bw, area_y1 - area_y0)
+            win = vw["window"]
+            v = View(win, box)
+            for _ in range(4):
+                S, th, al = 7 * mm / v.s, DIM_PT * PT_MM * mm / v.s, ARROW_MM * mm / v.s
+                v = View(dims_extent(tuple(win), vw["dims"], S, th, al), box)
+            S, th, al = 7 * mm / v.s, DIM_PT * PT_MM * mm / v.s, ARROW_MM * mm / v.s
+            # заголовок фрагмента
+            c.setFillColor(INK)
+            c.setFont(doc.FB, 9.5)
+            title = f"{prefix}-{vw['glass_pos']} · {vw['glass_name']}"
+            c.drawString(bx, area_y1 + 4 * mm, _clip(c, title, doc.FB, 9.5, bw))
+            c.setFont(doc.F, 7.5)
+            c.setFillColor(MUTED)
+            sub = f"Сторона {vw['side']}{(' — ' + vw['side_label']) if vw['side_label'] else ''} · {vw['edge_name']} · М {_scale_text(v.s / mm)}"
+            c.drawString(bx, area_y1, _clip(c, sub, doc.F, 7.5, bw))
+            # фрагмент стекла с обрезкой по окну
+            x0p, y0p = v.p(win[0], win[1])
+            x1p, y1p = v.p(win[2], win[3])
+            c.saveState()
+            clip = c.beginPath()
+            clip.rect(x0p, y0p, x1p - x0p, y1p - y0p)
+            c.clipPath(clip, stroke=0, fill=0)
+            _draw_contour(c, v, g["contour"], lw=1.2)
+            draw_glass_details(c, v, g, lw=0.8)
+            c.restoreState()
+            c.setStrokeColor(LINE)
+            c.setDash(4, 3)
+            c.setLineWidth(0.5)
+            c.rect(x0p, y0p, x1p - x0p, y1p - y0p, stroke=1, fill=0)
+            c.setDash()
+            draw_dims(c, v, layout_dims(vw["dims"], tuple(win), S, th, al), doc.F, DIM_PT)
+        # примечания
+        c.setFillColor(INK)
+        c.setFont(doc.FB, 9)
+        yy = 32 * mm
+        c.drawString(15 * mm, yy, f"Количество узлов: {node['qty']}" + (f"   ·   артикул {node['article']}" if node["article"] else "")
+                     + (f"   ·   зазор узла {n(node['joint_gap'])} мм" if node.get("joint_gap") not in (None, "") else ""))
+        c.setFont(doc.F, 8.5)
+        c.drawString(15 * mm, yy - 5 * mm, _clip(c, "Положение: " + "; ".join(node["positions"]), doc.F, 8.5, W - 30 * mm))
+        c.setFillColor(MUTED)
+        c.drawString(15 * mm, yy - 10 * mm, "Размеры в мм. Фрагмент стекла показан в рамке; размеры — от кромки узла и между элементами обработки.")
+
+    doc.add(size, page)
+
+
 def build_pdf(order: dict, products: list[dict], resolved: dict[str, dict], company: dict, mode: str = "full") -> bytes:
     doc = Doc(order, company)
     client = mode in ("client", "full")
@@ -565,4 +637,8 @@ def build_pdf(order: dict, products: list[dict], resolved: dict[str, dict], comp
             for g in res["glasses"]:
                 part = f"{order.get('number') or '0'}-{pi}-{g['pos']}"
                 glass_sheet(doc, p, res, g, part)
+            # узлы крупным планом — только у изделий с включённой галочкой
+            if ((p.get("data") or {}).get("settings") or {}).get("node_details"):
+                for node in res.get("nodes") or []:
+                    node_sheet(doc, p, res, node, f"{order.get('number') or '0'}-{pi}")
     return doc.render()

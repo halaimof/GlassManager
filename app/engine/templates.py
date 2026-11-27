@@ -145,6 +145,18 @@ def apply_kit(data: dict, kit: dict, lib: Library) -> dict:
             "flip": bool(item.get("flip")), "qty": int(item.get("qty") or 1), "from_kit": kid,
         })
 
+    # углы: последнее стекло плоскости ↔ первое стекло следующей (фронт ↔ бок)
+    plane_order: list[str] = []
+    for p in data["panels"]:
+        if p.get("plane", "front") not in plane_order:
+            plane_order.append(p.get("plane", "front"))
+    corners = []
+    for pa, pb in zip(plane_order, plane_order[1:]):
+        la = [p for p in data["panels"] if p.get("plane", "front") == pa]
+        lb = [p for p in data["panels"] if p.get("plane", "front") == pb]
+        if la and lb:
+            corners.append((la[-1], lb[0]))
+
     for item in kit.get("items") or []:
         model = lib.get("hardware", item.get("model_id"))
         placement = item.get("placement", "none")
@@ -158,6 +170,15 @@ def apply_kit(data: dict, kit: dict, lib: Library) -> dict:
             })
             continue
         nsides = len(model.get("sides") or [])
+        if placement == "corner":
+            for a, b in corners:
+                ta, tb = {"panel_id": a["id"], "edge": "right"}, {"panel_id": b["id"], "edge": "left"}
+                if item.get("swap"):
+                    ta, tb = tb, ta
+                targets = {"A": ta, "B": tb} if nsides >= 2 else {"A": ta}
+                for pos in positions:
+                    add_inst(model["id"], targets, pos, item)
+            continue
         for p in data["panels"]:
             is_door = p["type"] in DOOR_TYPES
             nb = nbs[p["id"]]

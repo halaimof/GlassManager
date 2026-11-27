@@ -69,3 +69,26 @@ def test_frontend_not_cached_stale():
             assert r.status_code == 200
             assert r.headers["cache-control"] == "no-cache"
         assert c.get("/static/js/ui.js").headers.get("etag")
+
+
+def _pages(pdf: bytes) -> int:
+    import re
+    return len(re.findall(rb"/Type\s*/Page[^s]", pdf))
+
+
+def test_node_sheets_only_with_checkbox():
+    with TestClient(app) as c:
+        tm = {t["data"].get("builtin_key"): t["id"] for t in c.get("/api/lib/construction_templates").json()}
+        kit = c.get("/api/lib/kits").json()[0]
+        o = c.post("/api/orders", json={"client": "Узлы"}).json()
+        r = c.post(f"/api/orders/{o['id']}/products", json={
+            "measurement": {"width_top": 1200, "height_left": 2200}, "template_id": tm["door_fixed"], "kit_id": kit["id"]}).json()
+        pid = r["product"]["id"]
+        base = _pages(c.get(f"/api/orders/{o['id']}/pdf?mode=production").content)
+        data = r["product"]["data"]
+        data["settings"]["node_details"] = True
+        r2 = c.put(f"/api/products/{pid}", json={"data": data}).json()
+        nodes = r2["resolved"]["nodes"]
+        assert nodes  # петли и ручка из комплекта
+        with_nodes = _pages(c.get(f"/api/orders/{o['id']}/pdf?mode=production").content)
+        assert with_nodes == base + len(nodes)

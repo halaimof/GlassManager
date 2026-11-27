@@ -39,6 +39,7 @@ DEFAULT_SETTINGS = {
     "edge_work": "Шлифовка + полировка",
     "hardware_color": "Хром",
     "dim_side": "auto",         # auto | left | right
+    "node_details": False,      # листы узлов крупным планом в PDF для производства
 }
 
 DEFAULT_MEASUREMENT = {

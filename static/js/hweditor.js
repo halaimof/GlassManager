@@ -61,8 +61,8 @@ export async function hardwareEditor(root, id) {
     const vertical = edgePrim ? (() => { const sg = edgePrim.segs[0]; return Math.abs(sg.p2[1] - sg.p1[1]) >= Math.abs(sg.p2[0] - sg.p1[0]); })() : true;
     const steps = !realSd ? [['Модель создана', true], ['Производитель указан', !!d.manufacturer_id],
       ['Сторон нет — модель только в спецификации (обработку можно добавить кнопкой «+ Сторона»)', true], ['Сохранено', !st.dirty]] : [
-      ['Модель создана', true], ['Производитель указан', !!d.manufacturer_id], ['DXF загружен (или заданы отверстия)', !!sd.dxf_id || (sd.holes || []).length > 0],
-      ['Рабочие линии выбраны', nOp > 0 || (sd.holes || []).length > 0], ['Вспомогательные помечены', nAux > 0 || !sd.dxf_id], ['Край стекла указан', !!sd.edge_pid || !sd.dxf_id],
+      ['Модель создана', true], ['Производитель указан', !!d.manufacturer_id], ['DXF загружен (или заданы отверстия/вырезы)', !!sd.dxf_id || (sd.holes || []).length > 0 || (sd.cutouts || []).length > 0],
+      ['Рабочие линии выбраны', nOp > 0 || (sd.holes || []).length > 0 || (sd.cutouts || []).length > 0], ['Вспомогательные помечены', nAux > 0 || !sd.dxf_id], ['Край стекла указан', !!sd.edge_pid || !sd.dxf_id],
       ['Точка привязки задана', !!sd.anchor || !sd.dxf_id], ['Сохранено', !st.dirty],
     ];
     const tools = [['op', 'Обработка', '#c0392b'], ['aux', 'Вспомогательная', '#7f8a93'], ['ignore', 'Не использовать', '#d0d6db'], ['edge', 'Край стекла', '#1f6fd1'], ['anchor', 'Точка привязки', '#1f6fd1']];
@@ -114,7 +114,18 @@ export async function hardwareEditor(root, id) {
             field('v', numInput(ho.v, (v) => { ho.v = v ?? 0; markDirty(); renderView(); })),
             field('Ø', numInput(ho.d, (v) => { ho.d = v ?? 0; markDirty(); renderView(); })),
             h('button.icon-btn', { style: { alignSelf: 'flex-end' }, onclick: () => { sd.holes.splice(i, 1); markDirty(); renderLeft(); renderView(); } }, '×'))),
-          h('button.btn.sm', { onclick: () => { (sd.holes = sd.holes || []).push({ u: 0, v: 30, d: 12 }); markDirty(); renderLeft(); renderView(); } }, '+ Отверстие')) : null),
+          h('button.btn.sm', { onclick: () => { (sd.holes = sd.holes || []).push({ u: 0, v: 30, d: 12 }); markDirty(); renderLeft(); renderView(); } }, '+ Отверстие'),
+          h('div.sec-title.small.muted', 'ВЫРЕЗЫ ОТ КРОМКИ (БЕЗ DXF)'),
+          h('span.hint', 'u — центр выреза вдоль кромки от точки привязки, глубина — от кромки внутрь стекла, высота — вдоль кромки, R — радиус внутренних углов (R = высота/2 — полукруглый U-вырез).'),
+          ...(sd.cutouts || []).map((cu, i) => h('div.row', { style: { flexWrap: 'nowrap' } },
+            field('u', numInput(cu.u, (v) => { cu.u = v ?? 0; markDirty(); renderView(); })),
+            field('Глубина', numInput(cu.depth, (v) => { cu.depth = v ?? 0; markDirty(); renderView(); })),
+            field('Высота', numInput(cu.h, (v) => { cu.h = v ?? 0; markDirty(); renderView(); })),
+            field('R', numInput(cu.r, (v) => { cu.r = v ?? 0; markDirty(); renderView(); })),
+            h('button.icon-btn', { style: { alignSelf: 'flex-end' }, onclick: () => { sd.cutouts.splice(i, 1); markDirty(); renderLeft(); renderView(); } }, '×'))),
+          h('button.btn.sm', { onclick: () => { (sd.cutouts = sd.cutouts || []).push({ u: 0, depth: 24, h: 20, r: 10 }); markDirty(); renderLeft(); renderView(); } }, '+ Вырез'),
+          field('Вычет кромки этого стекла', numInput(sd.edge_deduction, (v) => { sd.edge_deduction = v; markDirty(); }, { unit: 'мм', placeholder: 'нет' }),
+            'На сколько стекло этой стороны короче на кромке узла (например, стекло 2 у углового коннектора). Пусто — не влияет.')) : null),
       h('div.props-sec', h('div.sec-title', 'Готовность'), h('ol.steps', steps.map(([t, ok]) => h('li' + (ok ? '.done' : ''), (ok ? '✓ ' : '') + t)))));
   }
 
@@ -180,9 +191,26 @@ export async function hardwareEditor(root, id) {
     // параметрические отверстия (предпросмотр в системе стороны)
     if (fr || !st.dxf) {
       const { o, d, n } = fr || { o: sd.anchor || [0, 0], d: [0, 1], n: [-1, 0] };
+      if (!fr && ((sd.holes || []).length || (sd.cutouts || []).length)) {
+        // без DXF: условная кромка (вертикаль через точку привязки), стекло — слева
+        const L = Math.max(st.view.w, st.view.h) * 3;
+        svg.appendChild(s('polygon', { class: 'glass-side', points: `${o[0] - L},${-o[1] - L} ${o[0]},${-o[1] - L} ${o[0]},${-o[1] + L} ${o[0] - L},${-o[1] + L}` }));
+        svg.appendChild(s('line', { class: 'prim edge', x1: o[0], y1: -o[1] - L, x2: o[0], y2: -o[1] + L, ...ns, 'stroke-width': 2 }));
+        svg.appendChild(s('text', { x: o[0] + 6 * kk, y: -o[1] - 70, 'font-size': 11 * kk, fill: '#1f6fd1' }, 'кромка'));
+      }
       for (const ho of sd.holes || []) {
         const c = [o[0] + ho.u * d[0] + ho.v * n[0], o[1] + ho.u * d[1] + ho.v * n[1]];
         svg.appendChild(s('circle', { cx: c[0], cy: -c[1], r: (ho.d || 0) / 2, fill: 'none', stroke: '#c0392b', 'stroke-dasharray': '3 2', ...ns }));
+      }
+      const W = (u, v) => [o[0] + u * d[0] + v * n[0], o[1] + u * d[1] + v * n[1]];
+      for (const cu of sd.cutouts || []) {
+        const u0 = (cu.u || 0) - (cu.h || 0) / 2, u1 = (cu.u || 0) + (cu.h || 0) / 2, dp = cu.depth || 0;
+        const r = Math.max(0, Math.min(cu.r || 0, (cu.h || 0) / 2, dp));
+        const pts = [W(u0, 0), W(u0, dp - r)];
+        for (let k = 1; k <= 12; k++) { const a = Math.PI - (Math.PI / 2) * k / 12; pts.push(W(u0 + r + r * Math.cos(a), dp - r + r * Math.sin(a))); }
+        for (let k = 0; k <= 12; k++) { const a = Math.PI / 2 - (Math.PI / 2) * k / 12; pts.push(W(u1 - r + r * Math.cos(a), dp - r + r * Math.sin(a))); }
+        pts.push(W(u1, 0));
+        svg.appendChild(s('polyline', { points: pts.map(([x, y]) => `${x},${-y}`).join(' '), fill: 'none', stroke: '#c0392b', 'stroke-dasharray': '3 2', ...ns }));
       }
     }
     if (sd.anchor) {
@@ -201,7 +229,7 @@ export async function hardwareEditor(root, id) {
       shape.setAttribute('class', 'snap'); shape.setAttribute('vector-effect', 'non-scaling-stroke'); shape.setAttribute('stroke-width', '2');
       svg.appendChild(shape);
     }
-    if (!st.dxf && !(sd.holes || []).length) {
+    if (!st.dxf && !(sd.holes || []).length && !(sd.cutouts || []).length) {
       svg.appendChild(s('text', { x: st.view.x + st.view.w / 2, y: st.view.y + st.view.h / 2, 'text-anchor': 'middle', 'font-size': 14 * kk, fill: '#6b7680' }, 'Загрузите DXF или добавьте отверстия'));
     }
   }
