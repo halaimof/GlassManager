@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import math
 
-from ..geometry.prims import transform_seg
+from ..geometry.prims import chain_closed, chain_points, chain_segments, transform_seg, walk_end, walk_start
 from .library import Library
 
 EDGE_NAMES = {"left": "левая кромка", "right": "правая кромка", "top": "верх", "bottom": "низ"}
@@ -36,27 +36,58 @@ def _norm(v):
     return (v[0] / l, v[1] / l) if l > 1e-12 else (0.0, 1.0)
 
 
-def side_frame(side: dict, prims_by_id: dict[str, dict]):
-    """(O, d, n) локальной системы стороны фурнитуры в координатах DXF."""
+def infer_edge(op_segs: list[dict]):
+    """Кромка по самому вырезу, если линия края в DXF не указана: открытый контур выреза
+    начинается и заканчивается на кромке стекла. Возвращает (p1, p2, точки контура) или None."""
+    best = None
+    for ch in chain_segments([s for s in op_segs if s["t"] != "circle"]):
+        if chain_closed(ch):
+            continue
+        a, b = walk_start(ch[0]), walk_end(ch[-1])
+        ln = math.hypot(b[0] - a[0], b[1] - a[1])
+        if ln > 1.0 and (best is None or ln > best[0]):
+            best = (ln, a, b, ch)
+    if not best:
+        return None
+    return best[1], best[2], chain_points(best[3], 0.05)
+
+
+def _up_right(d):
+    if abs(d[1]) >= abs(d[0]):
+        return (-d[0], -d[1]) if d[1] < 0 else d
+    return (-d[0], -d[1]) if d[0] < 0 else d
+
+
+def side_frame(side: dict, prims_by_id: dict[str, dict], op_segs: list[dict] | None = None):
+    """(O, d, n) локальной системы стороны фурнитуры в координатах DXF.
+    Край стекла — линия, указанная в модели; если не указана — определяется по концам выреза,
+    а сторона стекла — по тому, где лежит сам вырез."""
     edge = prims_by_id.get(side.get("edge_pid") or "")
-    seg = None
-    if edge:
-        seg = next((s for s in edge["segs"] if s["t"] == "line"), None)
+    seg = next((s for s in edge["segs"] if s["t"] == "line"), None) if edge else None
+    auto_n = None
     if seg:
         p1, p2 = seg["p1"], seg["p2"]
-        d = _norm((p2[0] - p1[0], p2[1] - p1[1]))
-        if abs(d[1]) >= abs(d[0]):
-            if d[1] < 0:
-                d = (-d[0], -d[1])
-        elif d[0] < 0:
-            d = (-d[0], -d[1])
+        d = _up_right(_norm((p2[0] - p1[0], p2[1] - p1[1])))
         base = p1
     else:
-        d = (0.0, 1.0)
-        base = side.get("anchor") or [0.0, 0.0]
+        inf = infer_edge(op_segs or [])
+        if inf:
+            a, b, pts = inf
+            mid = ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)
+            d = _up_right(_norm((b[0] - a[0], b[1] - a[1])))
+            base = a
+            left = (-d[1], d[0])
+            side_sum = sum((q[0] - a[0]) * left[0] + (q[1] - a[1]) * left[1] for q in pts)
+            auto_n = left if side_sum >= 0 else (-left[0], -left[1])
+        else:
+            d = (0.0, 1.0)
+            base = side.get("anchor") or [0.0, 0.0]
     left = (-d[1], d[0])
-    n = left if side.get("glass_side", "left") in ("left", "above") else (-left[0], -left[1])
-    anchor = side.get("anchor") or base
+    if auto_n is not None:
+        n = auto_n
+    else:
+        n = left if side.get("glass_side", "left") in ("left", "above") else (-left[0], -left[1])
+    anchor = side.get("anchor") or (mid if auto_n is not None else base)
     t = (anchor[0] - base[0]) * d[0] + (anchor[1] - base[1]) * d[1]
     origin = (base[0] + d[0] * t, base[1] + d[1] * t)
     return origin, d, n
@@ -198,7 +229,8 @@ def apply_hardware(inst: dict, model: dict, glasses: dict[str, dict], lib: Libra
         if inst.get("flip"):
             D = (-D[0], -D[1])
         prims = {p["id"]: p for p in lib.dxf_primitives(side.get("dxf_id"))}
-        O, d, n = side_frame(side, prims)
+        src_segs = side_segments(side, lib)
+        O, d, n = side_frame(side, prims, src_segs)
         det_src = d[0] * n[1] - d[1] * n[0]
         det_dst = D[0] * N[1] - D[1] * N[0]
         mirrored = (det_src > 0) != (det_dst > 0)
@@ -209,7 +241,7 @@ def apply_hardware(inst: dict, model: dict, glasses: dict[str, dict], lib: Libra
             v = qx * n[0] + qy * n[1]
             return (P[0] + u * D[0] + v * N[0], P[1] + u * D[1] + v * N[1])
 
-        segs = [transform_seg(s, fn, mirrored) for s in side_segments(side, lib)]
+        segs = [transform_seg(s, fn, mirrored) for s in src_segs]
         for hole in side.get("holes") or []:
             dmt = float(hole.get("d") or 0)
             if dmt <= 0:

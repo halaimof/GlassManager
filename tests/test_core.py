@@ -396,3 +396,24 @@ def test_processing_on_wrong_glass_side_is_reported():
     r = build_contour([(0, 0), (500, 0), (500, 1000), (0, 1000)], segs)
     assert r["cut_boxes"] == []
     assert any("вне стекла" in w and "Где стекло относительно края" in w for w in r["warnings"])
+
+
+def test_side_without_edge_line_infers_edge_and_glass_side_from_cutout():
+    """Сторона B без указанного края: кромка — по концам открытого выреза, стекло — со стороны выреза."""
+    prims_b = [{"id": "n", "segs": [{"t": "line", "p1": [100, 10], "p2": [120, 10]}, {"t": "line", "p1": [120, 10], "p2": [120, 72]},
+                                    {"t": "line", "p1": [120, 72], "p2": [100, 72]}]}]   # вырез вправо от кромки x=100
+    hw = {"id": "h", "name": "Петля", "data": {"connection": "glass-glass", "sides": [
+        {"key": "A", "holes": [{"u": 0, "v": 25, "d": 16}]},
+        {"key": "B", "dxf_id": "db", "roles": {}, "edge_pid": None, "glass_side": "left", "anchor": None}]}}
+    lib = Library({"hardware": {"h": hw}}, {"db": {"data": {"primitives": prims_b}}})
+    free = {k: {"kind": "free"} for k in ("left", "right", "top", "bottom")}
+    panels = [{"id": f"p{i}", "name": n, "type": "fixed", "width": {"mode": "value", "value": 600},
+               "height_override": 1000, "edges": dict(free)} for i, n in enumerate(("A", "B"))]
+    res = resolve({"panels": panels, "hardware": [{"id": "i", "model_id": "h",
+                   "targets": {"A": {"panel_id": "p0", "edge": "right"}, "B": {"panel_id": "p1", "edge": "left"}},
+                   "pos": {"ref": "center", "offset": 0}}]}, lib)
+    gb = res["glasses"][1]
+    assert len(gb["cut_boxes"]) == 1
+    x0, y0, x1, y1 = gb["cut_boxes"][0]
+    assert (x0, x1) == (pytest.approx(0), pytest.approx(20))          # вырез на левой кромке стекла B, глубина 20
+    assert (y0 + y1) / 2 == pytest.approx(500) and y1 - y0 == pytest.approx(62)

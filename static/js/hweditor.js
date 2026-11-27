@@ -62,7 +62,7 @@ export async function hardwareEditor(root, id) {
     const steps = !realSd ? [['Модель создана', true], ['Производитель указан', !!d.manufacturer_id],
       ['Сторон нет — модель только в спецификации (обработку можно добавить кнопкой «+ Сторона»)', true], ['Сохранено', !st.dirty]] : [
       ['Модель создана', true], ['Производитель указан', !!d.manufacturer_id], ['DXF загружен (или заданы отверстия/вырезы)', !!sd.dxf_id || (sd.holes || []).length > 0 || (sd.cutouts || []).length > 0],
-      ['Рабочие линии выбраны', nOp > 0 || (sd.holes || []).length > 0 || (sd.cutouts || []).length > 0], ['Вспомогательные помечены', nAux > 0 || !sd.dxf_id], ['Край стекла указан', !!sd.edge_pid || !sd.dxf_id],
+      ['Рабочие линии выбраны', nOp > 0 || (sd.holes || []).length > 0 || (sd.cutouts || []).length > 0], ['Вспомогательные помечены', nAux > 0 || !sd.dxf_id], [sd.edge_pid || !sd.dxf_id ? 'Край стекла указан' : (inferEdge(sd) ? 'Край стекла — определён по концам выреза' : 'Край стекла не указан и не определяется по вырезу'), !!sd.edge_pid || !sd.dxf_id || !!inferEdge(sd)],
       ['Точка привязки задана', !!sd.anchor || !sd.dxf_id], ['Сохранено', !st.dirty],
     ];
     const tools = [['op', 'Обработка', '#c0392b'], ['aux', 'Вспомогательная', '#7f8a93'], ['ignore', 'Не использовать', '#d0d6db'], ['edge', 'Край стекла', '#1f6fd1'], ['anchor', 'Точка привязки', '#1f6fd1']];
@@ -175,20 +175,54 @@ export async function hardwareEditor(root, id) {
     return sum > 0 ? 'above' : 'below';
   }
 
+  // Кромка по самому вырезу (если линия края не указана): концы открытого контура обработки.
+  function inferEdge(sd) {
+    const prims = st.dxf ? st.dxf.data.primitives : [];
+    const ends = new Map(), body = [];
+    const key = (p) => `${Math.round(p[0] * 100)}|${Math.round(p[1] * 100)}`;
+    const add = (p) => { const k = key(p); const e = ends.get(k) || { p, n: 0 }; e.n++; ends.set(k, e); };
+    for (const pr of prims) {
+      if (pr.id === sd.edge_pid || ((sd.roles || {})[pr.id] || 'op') !== 'op') continue;
+      for (const g of pr.segs) {
+        if (g.t === 'circle') continue;
+        if (g.t === 'line') { add(g.p1); add(g.p2); body.push(g.p1, g.p2); } else {
+          const a0 = g.a0 * Math.PI / 180, a1 = g.a1 * Math.PI / 180;
+          const p0 = [g.c[0] + g.r * Math.cos(a0), g.c[1] + g.r * Math.sin(a0)], p1 = [g.c[0] + g.r * Math.cos(a1), g.c[1] + g.r * Math.sin(a1)];
+          add(p0); add(p1); body.push(p0, p1, g.c);
+        }
+      }
+    }
+    const free = [...ends.values()].filter((e) => e.n === 1).map((e) => e.p);
+    let best = null;
+    for (let i = 0; i < free.length; i++) for (let j = i + 1; j < free.length; j++) {
+      const L = Math.hypot(free[i][0] - free[j][0], free[i][1] - free[j][1]);
+      if (L > 1 && (!best || L > best.L)) best = { L, a: free[i], b: free[j] };
+    }
+    return best ? { a: best.a, b: best.b, body } : null;
+  }
+
   function sideFrame() {
     const sd = side();
     const prims = st.dxf ? st.dxf.data.primitives : [];
     const edge = prims.find((p) => p.id === sd.edge_pid);
-    if (!edge) return null;
-    const sg = edge.segs[0];
-    let d = [sg.p2[0] - sg.p1[0], sg.p2[1] - sg.p1[1]];
+    let p1, p2, auto = null;
+    if (edge) { p1 = edge.segs[0].p1; p2 = edge.segs[0].p2; } else {
+      auto = inferEdge(sd);
+      if (!auto) return null;
+      p1 = auto.a; p2 = auto.b;
+    }
+    let d = [p2[0] - p1[0], p2[1] - p1[1]];
     const l = Math.hypot(...d); d = [d[0] / l, d[1] / l];
     if (Math.abs(d[1]) >= Math.abs(d[0])) { if (d[1] < 0) d = [-d[0], -d[1]]; } else if (d[0] < 0) d = [-d[0], -d[1]];
     const leftN = [-d[1], d[0]];
-    const n = ['left', 'above'].includes(sd.glass_side) ? leftN : [-leftN[0], -leftN[1]];
-    const a = sd.anchor || sg.p1;
-    const t = (a[0] - sg.p1[0]) * d[0] + (a[1] - sg.p1[1]) * d[1];
-    return { o: [sg.p1[0] + d[0] * t, sg.p1[1] + d[1] * t], d, n };
+    let n;
+    if (auto) {
+      const sum = auto.body.reduce((acc, q) => acc + (q[0] - p1[0]) * leftN[0] + (q[1] - p1[1]) * leftN[1], 0);
+      n = sum >= 0 ? leftN : [-leftN[0], -leftN[1]];
+    } else n = ['left', 'above'].includes(sd.glass_side) ? leftN : [-leftN[0], -leftN[1]];
+    const a = sd.anchor || (auto ? [(p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2] : p1);
+    const t = (a[0] - p1[0]) * d[0] + (a[1] - p1[1]) * d[1];
+    return { o: [p1[0] + d[0] * t, p1[1] + d[1] * t], d, n, auto: auto ? [p1, p2] : null };
   }
 
   function renderView() {
@@ -240,6 +274,12 @@ export async function hardwareEditor(root, id) {
         pts.push(W(u1, 0));
         svg.appendChild(s('polyline', { points: pts.map(([x, y]) => `${x},${-y}`).join(' '), fill: 'none', stroke: '#c0392b', 'stroke-dasharray': '3 2', ...ns }));
       }
+    }
+    if (fr && fr.auto) {
+      const [[x1, y1], [x2, y2]] = fr.auto;
+      const ux = (x2 - x1), uy = (y2 - y1), L = Math.hypot(ux, uy) || 1, ext = 40;
+      svg.appendChild(s('line', { x1: x1 - ux / L * ext, y1: -(y1 - uy / L * ext), x2: x2 + ux / L * ext, y2: -(y2 + uy / L * ext), stroke: '#1f6fd1', 'stroke-dasharray': '8 4', ...ns, 'stroke-width': 1.6 }));
+      svg.appendChild(s('text', { x: x2 + 6 * kk, y: -(y2 + uy / L * ext), 'font-size': 11 * kk, fill: '#1f6fd1' }, 'кромка (по вырезу)'));
     }
     if (sd.anchor) {
       const [ax, ay] = sd.anchor, r = 10 * kk;
