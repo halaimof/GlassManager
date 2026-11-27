@@ -63,7 +63,8 @@ export async function hardwareEditor(root, id) {
       ['Сторон нет — модель только в спецификации (обработку можно добавить кнопкой «+ Сторона»)', true], ['Сохранено', !st.dirty]] : [
       ['Модель создана', true], ['Производитель указан', !!d.manufacturer_id], ['DXF загружен (или заданы отверстия/вырезы)', !!sd.dxf_id || (sd.holes || []).length > 0 || (sd.cutouts || []).length > 0],
       ['Рабочие линии выбраны', nOp > 0 || (sd.holes || []).length > 0 || (sd.cutouts || []).length > 0], ['Вспомогательные помечены', nAux > 0 || !sd.dxf_id], [sd.edge_pid || !sd.dxf_id ? 'Край стекла указан' : (inferEdge(sd) ? 'Край стекла — определён по концам выреза' : 'Край стекла не указан и не определяется по вырезу'), !!sd.edge_pid || !sd.dxf_id || !!inferEdge(sd)],
-      ['Точка привязки задана', !!sd.anchor || !sd.dxf_id], ['Сохранено', !st.dirty],
+      [(() => { const fr = realSd && st.dxf ? sideFrame() : null; return fr && fr.autoAnchor ? 'Точка привязки — центр выреза (авто)' : 'Точка привязки задана'; })(),
+        !!sd.anchor || !sd.dxf_id || !!(realSd && st.dxf && (sideFrame() || {}).autoAnchor)], ['Сохранено', !st.dirty],
     ];
     const tools = [['op', 'Обработка', '#c0392b'], ['aux', 'Вспомогательная', '#7f8a93'], ['ignore', 'Не использовать', '#d0d6db'], ['edge', 'Край стекла', '#1f6fd1'], ['anchor', 'Точка привязки', '#1f6fd1']];
     clear(left,
@@ -109,7 +110,8 @@ export async function hardwareEditor(root, id) {
             'Подсвечено голубым — стекло должно быть там, где нарисована обработка') : null,
             (() => { const a = sd.edge_pid ? detectGlassSide(sd) : null; return a && a !== sd.glass_side ? h('div.msg.err', 'Обработка нарисована с другой стороны от края — сейчас она ляжет вне стекла и не вырежется. Нажмите «Определить по обработке».') : null; })(),
             h('div.readout', h('span', 'Рабочих примитивов'), h('b', String(nOp)), h('span', 'Вспомогательных'), h('b', String(nAux)),
-              h('span', 'Точка привязки'), h('b', sd.anchor ? `${fmt(sd.anchor[0], 2)}; ${fmt(sd.anchor[1], 2)}` : '—'))) : null,
+              h('span', 'Точка привязки'), h('b', (() => { const fr = sideFrame(); if (fr && fr.autoAnchor) return 'центр выреза (авто)'; return sd.anchor ? `${fmt(sd.anchor[0], 2)}; ${fmt(sd.anchor[1], 2)} (вручную)` : '—'; })())),
+            sd.anchor_mode === 'manual' ? h('button.btn.sm', { onclick: () => { sd.anchor_mode = 'auto'; markDirty(); renderLeft(); renderView(); } }, 'Точка привязки — по центру выреза (авто)') : null) : null,
           h('div.sec-title.small.muted', 'ПАРАМЕТРИЧЕСКИЕ ОТВЕРСТИЯ СТОРОНЫ'),
           h('span.hint', 'u — вдоль кромки от точки привязки, v — внутрь стекла от кромки.'),
           ...(sd.holes || []).map((ho, i) => h('div.row', { style: { flexWrap: 'nowrap' } },
@@ -175,54 +177,72 @@ export async function hardwareEditor(root, id) {
     return sum > 0 ? 'above' : 'below';
   }
 
-  // Кромка по самому вырезу (если линия края не указана): концы открытого контура обработки.
-  function inferEdge(sd) {
+  // Вырез на кромке: открытый контур обработки (не прямой отрезок), концы которого — на кромке.
+  // Та же логика, что в app/engine/hardware.py: find_opening / side_frame.
+  function findOpening(sd) {
     const prims = st.dxf ? st.dxf.data.primitives : [];
-    const ends = new Map(), body = [];
-    const key = (p) => `${Math.round(p[0] * 100)}|${Math.round(p[1] * 100)}`;
-    const add = (p) => { const k = key(p); const e = ends.get(k) || { p, n: 0 }; e.n++; ends.set(k, e); };
+    const segs = [];
     for (const pr of prims) {
       if (pr.id === sd.edge_pid || ((sd.roles || {})[pr.id] || 'op') !== 'op') continue;
       for (const g of pr.segs) {
         if (g.t === 'circle') continue;
-        if (g.t === 'line') { add(g.p1); add(g.p2); body.push(g.p1, g.p2); } else {
-          const a0 = g.a0 * Math.PI / 180, a1 = g.a1 * Math.PI / 180;
-          const p0 = [g.c[0] + g.r * Math.cos(a0), g.c[1] + g.r * Math.sin(a0)], p1 = [g.c[0] + g.r * Math.cos(a1), g.c[1] + g.r * Math.sin(a1)];
-          add(p0); add(p1); body.push(p0, p1, g.c);
+        if (g.t === 'line') segs.push({ a: g.p1, b: g.p2, pts: [g.p1, g.p2] });
+        else {
+          let sw = ((g.a1 - g.a0) % 360 + 360) % 360; if (sw < 1e-9) sw = 360;
+          const P = (deg) => [g.c[0] + g.r * Math.cos(deg * Math.PI / 180), g.c[1] + g.r * Math.sin(deg * Math.PI / 180)];
+          const pts = []; for (let k = 0; k <= 16; k++) pts.push(P(g.a0 + sw * k / 16));
+          segs.push({ a: pts[0], b: pts[pts.length - 1], pts });
         }
       }
     }
-    const free = [...ends.values()].filter((e) => e.n === 1).map((e) => e.p);
-    let best = null;
-    for (let i = 0; i < free.length; i++) for (let j = i + 1; j < free.length; j++) {
-      const L = Math.hypot(free[i][0] - free[j][0], free[i][1] - free[j][1]);
-      if (L > 1 && (!best || L > best.L)) best = { L, a: free[i], b: free[j] };
+    const near = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1]) < 0.01;
+    const rest = segs.slice(); let best = null;
+    while (rest.length) {
+      const first = rest.shift();
+      let chain = first.pts.slice(), grown = true;
+      while (grown) {
+        grown = false;
+        for (let i = 0; i < rest.length; i++) {
+          const sg = rest[i], head = chain[0], tail = chain[chain.length - 1];
+          if (near(tail, sg.a)) chain = chain.concat(sg.pts.slice(1));
+          else if (near(tail, sg.b)) chain = chain.concat(sg.pts.slice().reverse().slice(1));
+          else if (near(head, sg.b)) chain = sg.pts.slice(0, -1).concat(chain);
+          else if (near(head, sg.a)) chain = sg.pts.slice().reverse().slice(0, -1).concat(chain);
+          else continue;
+          rest.splice(i, 1); grown = true; break;
+        }
+      }
+      const a = chain[0], b = chain[chain.length - 1];
+      const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      if (L <= 1) continue; // замкнутый или вырожденный
+      const straight = chain.every((q) => Math.abs((q[0] - a[0]) * (b[1] - a[1]) - (q[1] - a[1]) * (b[0] - a[0])) / L <= 0.05);
+      if (straight) continue; // прямой отрезок (например, линия вдоль кромки) — не вырез
+      if (!best || L > best.L) best = { L, a, b, body: chain };
     }
-    return best ? { a: best.a, b: best.b, body } : null;
+    return best;
   }
+  const inferEdge = findOpening;
 
   function sideFrame() {
     const sd = side();
     const prims = st.dxf ? st.dxf.data.primitives : [];
     const edge = prims.find((p) => p.id === sd.edge_pid);
-    let p1, p2, auto = null;
-    if (edge) { p1 = edge.segs[0].p1; p2 = edge.segs[0].p2; } else {
-      auto = inferEdge(sd);
-      if (!auto) return null;
-      p1 = auto.a; p2 = auto.b;
-    }
+    const op = findOpening(sd);
+    let p1, p2;
+    if (edge) { p1 = edge.segs[0].p1; p2 = edge.segs[0].p2; } else if (op) { p1 = op.a; p2 = op.b; } else return null;
     let d = [p2[0] - p1[0], p2[1] - p1[1]];
     const l = Math.hypot(...d); d = [d[0] / l, d[1] / l];
     if (Math.abs(d[1]) >= Math.abs(d[0])) { if (d[1] < 0) d = [-d[0], -d[1]]; } else if (d[0] < 0) d = [-d[0], -d[1]];
     const leftN = [-d[1], d[0]];
     let n;
-    if (auto) {
-      const sum = auto.body.reduce((acc, q) => acc + (q[0] - p1[0]) * leftN[0] + (q[1] - p1[1]) * leftN[1], 0);
+    if (op) {
+      const sum = op.body.reduce((acc, q) => acc + (q[0] - p1[0]) * leftN[0] + (q[1] - p1[1]) * leftN[1], 0);
       n = sum >= 0 ? leftN : [-leftN[0], -leftN[1]];
     } else n = ['left', 'above'].includes(sd.glass_side) ? leftN : [-leftN[0], -leftN[1]];
-    const a = sd.anchor || (auto ? [(p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2] : p1);
+    const manual = sd.anchor_mode === 'manual' && sd.anchor;
+    const a = manual || !op ? (sd.anchor || p1) : [(op.a[0] + op.b[0]) / 2, (op.a[1] + op.b[1]) / 2];
     const t = (a[0] - p1[0]) * d[0] + (a[1] - p1[1]) * d[1];
-    return { o: [p1[0] + d[0] * t, p1[1] + d[1] * t], d, n, auto: auto ? [p1, p2] : null };
+    return { o: [p1[0] + d[0] * t, p1[1] + d[1] * t], d, n, auto: !edge && op ? [p1, p2] : null, autoAnchor: !manual && !!op };
   }
 
   function renderView() {
@@ -281,8 +301,9 @@ export async function hardwareEditor(root, id) {
       svg.appendChild(s('line', { x1: x1 - ux / L * ext, y1: -(y1 - uy / L * ext), x2: x2 + ux / L * ext, y2: -(y2 + uy / L * ext), stroke: '#1f6fd1', 'stroke-dasharray': '8 4', ...ns, 'stroke-width': 1.6 }));
       svg.appendChild(s('text', { x: x2 + 6 * kk, y: -(y2 + uy / L * ext), 'font-size': 11 * kk, fill: '#1f6fd1' }, 'кромка (по вырезу)'));
     }
-    if (sd.anchor) {
-      const [ax, ay] = sd.anchor, r = 10 * kk;
+    const anc = fr ? fr.o : sd.anchor;
+    if (anc) {
+      const [ax, ay] = anc, r = 10 * kk;
       svg.appendChild(s('g', { class: 'anchor' },
         s('line', { x1: ax - r * 1.6, y1: -ay, x2: ax + r * 1.6, y2: -ay, ...ns, 'stroke-width': 1.5 }),
         s('line', { x1: ax, y1: -ay - r * 1.6, x2: ax, y2: -ay + r * 1.6, ...ns, 'stroke-width': 1.5 }),
@@ -328,7 +349,7 @@ export async function hardwareEditor(root, id) {
     if (st.tool === 'anchor') {
       const sn = findSnap(e);
       if (!sn) { toast('Наведите курсор на объектную привязку (конец, середина, центр…)', 'error', 2000); return; }
-      sd.anchor = [sn.p[0], sn.p[1]]; markDirty(); renderLeft(); renderView();
+      sd.anchor = [sn.p[0], sn.p[1]]; sd.anchor_mode = 'manual'; markDirty(); renderLeft(); renderView();
       return;
     }
     const pid = e.target.getAttribute && e.target.getAttribute('data-pid');

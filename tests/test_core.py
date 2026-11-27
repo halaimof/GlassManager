@@ -417,3 +417,40 @@ def test_side_without_edge_line_infers_edge_and_glass_side_from_cutout():
     x0, y0, x1, y1 = gb["cut_boxes"][0]
     assert (x0, x1) == (pytest.approx(0), pytest.approx(20))          # вырез на левой кромке стекла B, глубина 20
     assert (y0 + y1) / 2 == pytest.approx(500) and y1 - y0 == pytest.approx(62)
+
+
+def test_side_with_edge_line_as_processing_and_auto_center():
+    """Как у пользователя: вырез с «ушками», вдоль кромки нарисован отрезок с ролью «Обработка»,
+    край не указан, точка привязки поставлена не в центр. Ожидаем: кромка и сторона стекла — по вырезу,
+    точка привязки — центр выреза, линия кромки не режет стекло."""
+    ear = [
+        {"t": "line", "p1": [80, 73.5], "p2": [107, 73.5]},
+        {"t": "arc", "c": [117, 66], "r": 12, "a0": 128.69, "a1": 321.06},   # верхнее «ушко» (дуга)
+        {"t": "line", "p1": [126.33, 58.46], "p2": [126.33, 23.54]},
+        {"t": "arc", "c": [117, 16], "r": 12, "a0": 38.94, "a1": 231.31},    # нижнее «ушко»
+        {"t": "line", "p1": [107, 8.5], "p2": [80, 8.5]},
+    ]
+    from app.geometry.prims import seg_start, seg_end
+    # стыкуем концы дуг с отрезками точно
+    ear[0]["p2"] = list(seg_start(ear[1]))
+    ear[2]["p1"] = list(seg_end(ear[1]))
+    ear[2]["p2"] = list(seg_start(ear[3]))
+    ear[4]["p1"] = list(seg_end(ear[3]))
+    prims = [{"id": "n", "segs": ear}, {"id": "edge_as_op", "segs": [{"t": "line", "p1": [80, -20], "p2": [80, 100]}]}]
+    hw = {"id": "h", "name": "Петля", "data": {"connection": "glass-glass", "sides": [
+        {"key": "A", "holes": [{"u": 0, "v": 25, "d": 16}]},
+        {"key": "B", "dxf_id": "db", "roles": {}, "edge_pid": None, "glass_side": "left", "anchor": [80, 41.0 + 30]}]}}
+    lib = Library({"hardware": {"h": hw}}, {"db": {"data": {"primitives": prims}}})
+    free = {k: {"kind": "free"} for k in ("left", "right", "top", "bottom")}
+    panels = [{"id": f"p{i}", "name": n, "type": "fixed", "width": {"mode": "value", "value": 600},
+               "height_override": 1000, "edges": dict(free)} for i, n in enumerate(("A", "B"))]
+    res = resolve({"panels": panels, "hardware": [{"id": "i", "model_id": "h",
+                   "targets": {"A": {"panel_id": "p0", "edge": "right"}, "B": {"panel_id": "p1", "edge": "left"}},
+                   "pos": {"ref": "center", "offset": 0}}]}, lib)
+    gb = res["glasses"][1]
+    assert len(gb["cut_boxes"]) == 1, res["warnings"]
+    opening = gb["cut_feats"][0]["open"]
+    ys = sorted(p[1] for p in opening)
+    assert ys[1] - ys[0] == pytest.approx(65)                      # проём 73.5 − 8.5
+    assert (ys[0] + ys[1]) / 2 == pytest.approx(500)               # центр выреза — на оси узла (центр высоты)
+    assert not res["warnings"]

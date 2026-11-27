@@ -36,20 +36,33 @@ def _norm(v):
     return (v[0] / l, v[1] / l) if l > 1e-12 else (0.0, 1.0)
 
 
-def infer_edge(op_segs: list[dict]):
-    """Кромка по самому вырезу, если линия края в DXF не указана: открытый контур выреза
-    начинается и заканчивается на кромке стекла. Возвращает (p1, p2, точки контура) или None."""
+def _is_straight(pts, tol=0.05) -> bool:
+    a, b = pts[0], pts[-1]
+    ln = math.hypot(b[0] - a[0], b[1] - a[1])
+    if ln < 1e-9:
+        return False
+    return all(abs((q[0] - a[0]) * (b[1] - a[1]) - (q[1] - a[1]) * (b[0] - a[0])) / ln <= tol for q in pts)
+
+
+def find_opening(op_segs: list[dict]):
+    """Вырез на кромке: открытый контур обработки, который начинается и заканчивается на кромке.
+    Прямые отрезки (например, нарисованная вдоль кромки линия) вырезом не считаются.
+    Возвращает (a, b, точки контура) — a, b — концы проёма на кромке; или None."""
     best = None
     for ch in chain_segments([s for s in op_segs if s["t"] != "circle"]):
         if chain_closed(ch):
             continue
+        pts = chain_points(ch, 0.05)
+        if len(pts) < 2 or _is_straight(pts):
+            continue
         a, b = walk_start(ch[0]), walk_end(ch[-1])
         ln = math.hypot(b[0] - a[0], b[1] - a[1])
         if ln > 1.0 and (best is None or ln > best[0]):
-            best = (ln, a, b, ch)
-    if not best:
-        return None
-    return best[1], best[2], chain_points(best[3], 0.05)
+            best = (ln, a, b, pts)
+    return (best[1], best[2], best[3]) if best else None
+
+
+infer_edge = find_opening  # совместимость
 
 
 def _up_right(d):
@@ -60,34 +73,35 @@ def _up_right(d):
 
 def side_frame(side: dict, prims_by_id: dict[str, dict], op_segs: list[dict] | None = None):
     """(O, d, n) локальной системы стороны фурнитуры в координатах DXF.
-    Край стекла — линия, указанная в модели; если не указана — определяется по концам выреза,
-    а сторона стекла — по тому, где лежит сам вырез."""
+
+    * Край стекла — линия «Край стекла» из модели; если не указана — прямая через концы выреза.
+    * Стекло — с той стороны, где нарисован вырез (если выреза нет — по настройке «Где стекло»).
+    * Точка привязки — центр выреза (середина проёма на кромке; фурнитура делает вырезы
+      симметрично). Своя точка используется, только если задана вручную (anchor_mode = manual).
+    """
     edge = prims_by_id.get(side.get("edge_pid") or "")
     seg = next((s for s in edge["segs"] if s["t"] == "line"), None) if edge else None
-    auto_n = None
+    opening = find_opening(op_segs or [])
     if seg:
-        p1, p2 = seg["p1"], seg["p2"]
-        d = _up_right(_norm((p2[0] - p1[0], p2[1] - p1[1])))
-        base = p1
+        base = seg["p1"]
+        d = _up_right(_norm((seg["p2"][0] - base[0], seg["p2"][1] - base[1])))
+    elif opening:
+        base = opening[0]
+        d = _up_right(_norm((opening[1][0] - base[0], opening[1][1] - base[1])))
     else:
-        inf = infer_edge(op_segs or [])
-        if inf:
-            a, b, pts = inf
-            mid = ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)
-            d = _up_right(_norm((b[0] - a[0], b[1] - a[1])))
-            base = a
-            left = (-d[1], d[0])
-            side_sum = sum((q[0] - a[0]) * left[0] + (q[1] - a[1]) * left[1] for q in pts)
-            auto_n = left if side_sum >= 0 else (-left[0], -left[1])
-        else:
-            d = (0.0, 1.0)
-            base = side.get("anchor") or [0.0, 0.0]
+        base = side.get("anchor") or [0.0, 0.0]
+        d = (0.0, 1.0)
     left = (-d[1], d[0])
-    if auto_n is not None:
-        n = auto_n
+    if opening:
+        side_sum = sum((q[0] - base[0]) * left[0] + (q[1] - base[1]) * left[1] for q in opening[2])
+        n = left if side_sum >= 0 else (-left[0], -left[1])
     else:
         n = left if side.get("glass_side", "left") in ("left", "above") else (-left[0], -left[1])
-    anchor = side.get("anchor") or (mid if auto_n is not None else base)
+    manual = side.get("anchor_mode") == "manual" and side.get("anchor")
+    if manual or not opening:
+        anchor = side.get("anchor") or base
+    else:
+        anchor = ((opening[0][0] + opening[1][0]) / 2, (opening[0][1] + opening[1][1]) / 2)
     t = (anchor[0] - base[0]) * d[0] + (anchor[1] - base[1]) * d[1]
     origin = (base[0] + d[0] * t, base[1] + d[1] * t)
     return origin, d, n
@@ -241,7 +255,11 @@ def apply_hardware(inst: dict, model: dict, glasses: dict[str, dict], lib: Libra
             v = qx * n[0] + qy * n[1]
             return (P[0] + u * D[0] + v * N[0], P[1] + u * D[1] + v * N[1])
 
-        segs = [transform_seg(s, fn, mirrored) for s in src_segs]
+        def on_edge(sg, O=O, n=n):
+            if sg["t"] != "line":
+                return False
+            return all(abs((q[0] - O[0]) * n[0] + (q[1] - O[1]) * n[1]) < 0.05 for q in (sg["p1"], sg["p2"]))
+        segs = [transform_seg(s, fn, mirrored) for s in src_segs if not on_edge(s)]
         for hole in side.get("holes") or []:
             dmt = float(hole.get("d") or 0)
             if dmt <= 0:
