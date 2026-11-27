@@ -179,6 +179,38 @@ def build_contour(outline: list[tuple[float, float]], op_segs: list[dict]) -> di
         cut_boxes.append([round(v, 4) for v in part.bounds])
     cut_boxes.sort(key=lambda b: (b[1], b[0]))
 
+    # Для размеров: проём выреза на кромке стекла (где вырез выходит на кромку) и самая глубокая точка.
+    # Габарит вырезанной области сюда не годится: «ушки» и скругления выходят за проём.
+    cut_feats = []
+    edge_ring = glass.exterior
+    for part in parts:
+        if part.is_empty or part.area < 1e-3:
+            continue
+        x0, y0, x1, y1 = part.bounds
+        inter = part.intersection(edge_ring)
+        lines = []
+        for gm in (getattr(inter, "geoms", None) or [inter]):
+            if gm.geom_type == "LineString" and gm.length > 0.01:
+                lines.append(gm)
+            elif gm.geom_type == "MultiLineString":
+                lines += [ln for ln in gm.geoms if ln.length > 0.01]
+        if not lines:
+            cut_feats.append({"open": [], "depth": [[x0, y0], [x1, y1]], "bbox": [x0, y0, x1, y1]})
+            continue
+        for ln in lines:
+            (ax, ay), (bx, by) = ln.coords[0], ln.coords[-1]
+            vertical = abs(by - ay) >= abs(bx - ax)
+            if vertical:
+                # кромка вертикальная: глубина — по X, дальняя от кромки точка
+                depth_x = x0 if abs(x0 - ax) > abs(x1 - ax) else x1
+                depth = [[depth_x, (ay + by) / 2]]
+            else:
+                depth_y = y0 if abs(y0 - ay) > abs(y1 - ay) else y1
+                depth = [[(ax + bx) / 2, depth_y]]
+            cut_feats.append({"open": [[round(ax, 4), round(ay, 4)], [round(bx, 4), round(by, 4)]],
+                              "vertical": vertical, "depth": [[round(v, 4) for v in pt] for pt in depth],
+                              "bbox": [round(v, 4) for v in (x0, y0, x1, y1)]})
+
     def strip(chain):
         return [{k: v for k, v in s.items() if k != "rev"} for s in chain]
 
@@ -189,6 +221,7 @@ def build_contour(outline: list[tuple[float, float]], op_segs: list[dict]) -> di
         "open": [strip(ch) for ch in open_inner],
         "rings": extra_rings,
         "cut_boxes": cut_boxes,
+        "cut_feats": cut_feats,
         "area": result.area,
         "warnings": warnings,
     }

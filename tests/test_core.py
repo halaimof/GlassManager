@@ -340,3 +340,22 @@ def test_node_details_off_by_default():
     lib, kit = _corner_lib()
     data = apply_kit(tmpl("corner"), kit, lib)
     assert resolve(data, lib)["nodes"] == []
+
+
+def test_notch_with_relief_ears_dims_to_edge_opening():
+    """Вырез с круглыми «ушками» в углах: вдоль кромки размер — проём на кромке (63), а не габарит с ушками."""
+    from shapely.geometry import Point as SP, box as sbox
+
+    from app.engine.dims import glass_dims
+
+    shape = sbox(460, 400, 510, 463).union(SP(465, 400).buffer(8, 64)).union(SP(465, 463).buffer(8, 64))
+    pts = list(shape.exterior.coords)
+    segs = [{"t": "line", "p1": list(a), "p2": list(b)} for a, b in zip(pts, pts[1:])]
+    outline = [(0, 0), (500, 0), (500, 1000), (0, 1000)]
+    r = build_contour(outline, segs)
+    g = {"w": 500, "h": 1000, "outline": outline, "shape_type": "rect", **r}
+    right = [d for d in glass_dims(g) if d["t"] == "lin" and d["side"] == "right" and d["level"] == 1]
+    texts = [d["text"] for d in right]
+    assert texts == ["400", "63", "537"]          # снизу: до проёма, проём на кромке, до верха
+    top = [d["text"] for d in glass_dims(g) if d["t"] == "lin" and d["side"] == "top"]
+    assert top == ["457", "43"]                   # глубина — до самой глубокой точки (с ушками)

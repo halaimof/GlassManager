@@ -34,15 +34,23 @@ def _uniq(values: list[float], tol: float = 0.05) -> list[float]:
 
 
 def glass_features(g: dict) -> list[tuple[float, float]]:
-    """Характерные точки обработки (центры отверстий, границы вырезов)."""
-    pts: list[tuple[float, float]] = []
+    """Точки для размеров: (x, y, по_x, по_y).
+    Отверстие — центр (обе оси). Вырез на кромке — концы проёма на кромке (только вдоль кромки)
+    и самая глубокая точка (только поперёк кромки). Внутренний контур — его габарит."""
+    pts: list[tuple[float, float, bool, bool]] = []
     for h in g.get("holes", []):
-        pts.append((h["c"][0], h["c"][1]))
+        pts.append((h["c"][0], h["c"][1], True, True))
     w, hh = g["w"], g["h"]
-    for x0, y0, x1, y1 in g.get("cut_boxes", []):
-        for x in (x0, x1):
-            for y in (y0, y1):
-                pts.append((min(max(x, 0), w), min(max(y, 0), hh)))
+    for cf in g.get("cut_feats", []):
+        if cf.get("open"):
+            vert = cf.get("vertical", True)
+            for x, y in cf["open"]:
+                pts.append((min(max(x, 0), w), min(max(y, 0), hh), not vert, vert))
+            for x, y in cf.get("depth", []):
+                pts.append((min(max(x, 0), w), min(max(y, 0), hh), vert, not vert))
+        else:
+            x0, y0, x1, y1 = cf["bbox"]
+            pts += [(x0, y0, True, True), (x1, y1, True, True)]
     for chain in g.get("inner", []):
         xs, ys = [], []
         for s in chain:
@@ -53,7 +61,7 @@ def glass_features(g: dict) -> list[tuple[float, float]]:
                 xs += [s["c"][0] - s["r"], s["c"][0] + s["r"]]
                 ys += [s["c"][1] - s["r"], s["c"][1] + s["r"]]
         if xs:
-            pts += [(min(xs), min(ys)), (max(xs), max(ys))]
+            pts += [(min(xs), min(ys), True, True), (max(xs), max(ys), True, True)]
     return pts
 
 
@@ -62,8 +70,8 @@ def hardware_side(g: dict) -> str | None:
     if not feats:
         return None
     w = g["w"]
-    right = sum(1 for x, _ in feats if x > w / 2)
-    left = sum(1 for x, _ in feats if x < w / 2)
+    right = sum(1 for x, *_ in feats if x > w / 2)
+    left = sum(1 for x, *_ in feats if x < w / 2)
     return "right" if right >= left else "left"
 
 
@@ -78,20 +86,20 @@ def glass_dims(g: dict, dim_side: str = "auto") -> list[dict]:
         overall_side = "left" if hw == "right" else ("right" if hw == "left" else "left")
 
     # Цепочка по X сверху (от левого края)
-    inner_x = [x for x, _ in feats if 0.05 < x < w - 0.05]
+    inner_x = [x for x, _y, ux, _uy in feats if ux and 0.05 < x < w - 0.05]
     if inner_x:
         xs = _uniq([0.0] + inner_x + [w])
         # точка выноски: сама особенность (самая верхняя с таким X), края — верхние углы
         def top_y_at(x):
-            ys = [fy for fx, fy in feats if abs(fx - x) <= 0.05]
+            ys = [fy for fx, fy, *_ in feats if abs(fx - x) <= 0.05]
             return max(ys) if ys else h
         for a, b in zip(xs, xs[1:]):
             dims.append({"t": "lin", "dir": "h", "p1": [a, top_y_at(a) if 0 < a < w else h],
                          "p2": [b, top_y_at(b) if 0 < b < w else h], "side": "top", "level": 1, "text": fmt(b - a)})
     # Цепочки по Y — отдельно для особенностей у левой и у правой кромки
     side_feats = {
-        "left": [(x, y) for x, y in feats if x <= w / 2 and 0.05 < y < h - 0.05],
-        "right": [(x, y) for x, y in feats if x > w / 2 and 0.05 < y < h - 0.05],
+        "left": [(x, y) for x, y, _ux, uy in feats if uy and x <= w / 2 and 0.05 < y < h - 0.05],
+        "right": [(x, y) for x, y, _ux, uy in feats if uy and x > w / 2 and 0.05 < y < h - 0.05],
     }
     for side, sf in side_feats.items():
         if not sf:

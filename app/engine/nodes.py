@@ -10,7 +10,7 @@ import math
 
 from shapely.geometry import Point, Polygon
 
-from .dims import fmt
+from .dims import fmt, glass_features
 
 EDGE_RU = {"left": "левая кромка", "right": "правая кромка", "top": "верхняя кромка", "bottom": "нижняя кромка"}
 REF_RU = {"top": "от верха", "bottom": "от низа", "center": "от центра", "left": "от левого края", "right": "от правого края"}
@@ -56,35 +56,19 @@ def _view(g: dict, mark_bbox, edge: str) -> dict:
         return win[0] <= x <= win[2] and win[1] <= y <= win[3]
 
     holes = [hl for hl in g.get("holes", []) if inside(*hl["c"])]
-    cuts = []
-    for bx0, by0, bx1, by1 in g.get("cut_boxes", []):
-        if bx1 >= win[0] and bx0 <= win[2] and by1 >= win[1] and by0 <= win[3]:
-            cuts.append((max(bx0, 0), max(by0, 0), min(bx1, w), min(by1, hh)))
-    inner = []
-    for chain in g.get("inner", []):
-        xs, ys = [], []
-        for s in chain:
-            if s["t"] == "line":
-                xs += [s["p1"][0], s["p2"][0]]
-                ys += [s["p1"][1], s["p2"][1]]
-            else:
-                xs += [s["c"][0] - s["r"], s["c"][0] + s["r"]]
-                ys += [s["c"][1] - s["r"], s["c"][1] + s["r"]]
-        if xs and inside((min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2):
-            inner.append((min(xs), min(ys), max(xs), max(ys)))
-
     vertical = edge in ("left", "right")
     e = (w if edge == "right" else 0.0) if vertical else (hh if edge == "top" else 0.0)
     perp, along = [], []  # координаты поперёк кромки и вдоль неё
-    for hl in holes:
-        cx, cy = hl["c"]
-        perp.append(cx if vertical else cy)
-        along.append(cy if vertical else cx)
-    for bx0, by0, bx1, by1 in cuts + inner:
-        p0, p1 = (bx0, bx1) if vertical else (by0, by1)
-        a0, a1 = (by0, by1) if vertical else (bx0, bx1)
-        perp += [v for v in (p0, p1) if abs(v - e) > 0.05]
-        along += [a0, a1]
+    # те же точки, что и на листе детали: центры отверстий, концы проёма выреза на кромке, глубина выреза
+    for x, y, ux, uy in glass_features(g):
+        if not inside(x, y):
+            continue
+        px_, pu = (x, ux) if vertical else (y, uy)
+        ax_, au = (y, uy) if vertical else (x, ux)
+        if pu and abs(px_ - e) > 0.05:
+            perp.append(px_)
+        if au:
+            along.append(ax_)
     dims: list[dict] = []
     ps = _uniq([e] + perp)
     for a, b in zip(ps, ps[1:]):
