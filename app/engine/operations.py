@@ -67,6 +67,34 @@ def expand_group(op: dict) -> list[dict]:
     return out
 
 
+def cutout_center(op: dict, w: float, h: float, gy: float, axes: dict[str, float]) -> tuple[float, float]:
+    """Центр выреза по привязке.
+
+    anchor «edge» (по умолчанию для новых вырезов): отступ задаётся до КРАЯ выреза со стороны
+    базы — «от верха 300» = верхний край выреза в 300 мм от верха стекла, «от правого края 0» —
+    вырез вплотную к правой кромке. anchor «center» — до центра выреза (так хранились вырезы
+    в версиях до 0.2.3, поэтому без поля anchor сохраняется прежнее поведение).
+    """
+    cw, ch = float(op.get("w") or 0), float(op.get("h") or 0)
+    xs, ys = op.get("x") or {}, op.get("y") or {}
+    anchor = op.get("anchor") or {}
+    cx = resolve_x(xs, w)
+    cy = resolve_y(ys, h, gy, axes)
+    if anchor.get("x") == "edge":
+        ref = xs.get("ref", "left")
+        if ref in ("left", "abs"):
+            cx += cw / 2
+        elif ref == "right":
+            cx -= cw / 2
+    if anchor.get("y") == "edge":
+        ref = ys.get("ref", "top")
+        if ref == "top":
+            cy -= ch / 2
+        elif ref in ("bottom", "abs"):
+            cy += ch / 2
+    return cx, cy
+
+
 def rect_cut_segments(cx: float, cy: float, w: float, h: float, r: float) -> list[dict]:
     """Прямоугольный вырез/паз со скруглением углов. Центр (cx, cy)."""
     x0, x1, y0, y1 = cx - w / 2, cx + w / 2, cy - h / 2, cy + h / 2
@@ -128,9 +156,22 @@ def resolve_operations(glass: dict, ops: list[dict], axes: dict[str, float], war
                 cw, ch = float(op.get("w") or 0), float(op.get("h") or 0)
                 if cw <= 0 or ch <= 0:
                     continue
-                cx = resolve_x(op.get("x") or {}, w)
-                cy = resolve_y(op.get("y") or {}, h, gy, axes)
-                for s in rect_cut_segments(cx, cy, cw, ch, float(op.get("r") or 0)):
+                cx, cy = cutout_center(op, w, h, gy, axes)
+                rad = float(op.get("r") or 0)
+                # вырез у кромки продлеваем за кромку: скругляются только внутренние углы,
+                # без «рожек» стекла на кромке
+                x0, x1, y0, y1 = cx - cw / 2, cx + cw / 2, cy - ch / 2, cy + ch / 2
+                ext = rad + 2.0
+                if x0 <= 1e-6:
+                    x0 -= ext
+                if x1 >= w - 1e-6:
+                    x1 += ext
+                if y0 <= 1e-6:
+                    y0 -= ext
+                if y1 >= h - 1e-6:
+                    y1 += ext
+                cx, cy, cw, ch = (x0 + x1) / 2, (y0 + y1) / 2, x1 - x0, y1 - y0
+                for s in rect_cut_segments(cx, cy, cw, ch, rad):
                     s["src"] = op["id"]
                     segs.append(s)
         except ValueError as e:

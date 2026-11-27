@@ -135,22 +135,35 @@ def glass_dims(g: dict, dim_side: str = "auto") -> list[dict]:
 
 
 def product_dims(glasses: list[dict], planes: list[dict]) -> list[dict]:
-    """Размеры общего вида (мировые координаты плоскости, со сдвигом dx)."""
-    dims = []
+    """Размеры общего вида (мировые координаты, со сдвигом плоскости dx). Все — снаружи изделия:
+    ширины стекол и проём — снизу; высоты стекол — слева/справа (стекла с одинаковой высотой
+    и положением — одним размером); высота верха стекол от пола — снаружи последним уровнем."""
+    dims: list[dict] = []
+    dx_of = {pl["key"]: pl["dx"] for pl in planes}
+    placed = [dict(g, wx=g["x"] + dx_of.get(g["plane"], 0)) for g in glasses]
+    if not placed:
+        return dims
     for pl in planes:
-        gs = sorted([g for g in glasses if g["plane"] == pl["key"]], key=lambda g: g["x"])
-        dx = pl["dx"]
-        if not gs:
-            continue
+        gs = sorted([g for g in placed if g["plane"] == pl["key"]], key=lambda g: g["wx"])
         for g in gs:
-            dims.append({"t": "lin", "dir": "h", "p1": [g["x"] + dx, g["y"]], "p2": [g["x"] + g["w"] + dx, g["y"]],
+            dims.append({"t": "lin", "dir": "h", "p1": [g["wx"], g["y"]], "p2": [g["wx"] + g["w"], g["y"]],
                          "side": "bottom", "level": 1, "text": fmt(g["w"])})
-            dims.append({"t": "lin", "dir": "v", "p1": [g["x"] + dx + g["w"] / 2, g["y"]],
-                         "p2": [g["x"] + dx + g["w"] / 2, g["y"] + g["h"]], "side": "inside", "level": 0,
-                         "text": fmt(g["h"])})
-        dims.append({"t": "lin", "dir": "h", "p1": [dx, 0], "p2": [pl["L"] + dx, 0], "side": "bottom", "level": 2,
-                     "text": fmt(pl["L"]), "overall": True})
-        top = max(g["y"] + g["h"] for g in gs)
-        dims.append({"t": "lin", "dir": "v", "p1": [dx, 0], "p2": [dx, top], "side": "left", "level": 1,
-                     "text": fmt(top), "overall": True})
+        if gs and pl["L"]:
+            dims.append({"t": "lin", "dir": "h", "p1": [pl["dx"], 0], "p2": [pl["dx"] + pl["L"], 0], "side": "bottom",
+                         "level": 2, "text": fmt(pl["L"]), "overall": True})
+    leftmost = min(placed, key=lambda g: g["wx"])
+    rightmost = max(placed, key=lambda g: g["wx"] + g["w"])
+    groups: dict[tuple, list[dict]] = {}
+    for g in placed:
+        groups.setdefault((round(g["y"], 1), round(g["y"] + g["h"], 1)), []).append(g)
+    level = {"left": 0, "right": 0}
+    for (y0, y1), gs in sorted(groups.items()):
+        side = "left" if leftmost in gs else "right"
+        level[side] += 1
+        x = leftmost["wx"] if side == "left" else rightmost["wx"] + rightmost["w"]
+        dims.append({"t": "lin", "dir": "v", "p1": [x, y0], "p2": [x, y1], "side": side, "level": level[side],
+                     "text": fmt(y1 - y0)})
+    top = max(g["y"] + g["h"] for g in placed)
+    dims.append({"t": "lin", "dir": "v", "p1": [leftmost["wx"], 0], "p2": [leftmost["wx"], top], "side": "left",
+                 "level": level["left"] + 1, "text": fmt(top), "overall": True})
     return dims

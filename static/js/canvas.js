@@ -157,10 +157,13 @@ export class CadCanvas {
       root.appendChild(s('text', { class: 'axis-label', x: maxx + 160, y: -a.y + 4 * k, 'font-size': fs * 0.9 }, a.name));
     }
     // стекла
+    let detail = null;
     for (const g of r.glasses) {
       const dx = g.x + planes[g.plane].dx, dy = g.y;
       const isSel = this.sel && this.sel.type === 'glass' && this.sel.id === g.id;
-      const gg = s('g');
+      const focus = this.showDims === 'detail' && this.sel && this.sel.type === 'glass';
+      // в режиме «Размеры детали» остальные стекла приглушены, чтобы размеры не накладывались на них
+      const gg = s('g', { opacity: focus && !isSel ? 0.18 : null });
       gg.appendChild(s('path', { class: 'glass' + (isSel ? ' sel' : ''), d: contourPath(g.contour, dx, dy), ...sw, 'stroke-width': isSel ? 2 : 1.3,
         onmousedown: (e) => { if (e.button === 0 && !e.shiftKey) { e.stopPropagation(); this.onSelect({ type: 'glass', id: g.id }); } } }));
       for (const ho of g.holes) gg.appendChild(s('circle', { class: 'hole', cx: ho.c[0] + dx, cy: -(ho.c[1] + dy), r: ho.r, ...sw, 'stroke-width': 1, 'pointer-events': 'none' }));
@@ -192,15 +195,15 @@ export class CadCanvas {
       }
       root.appendChild(gg);
       // размеры детали
-      if (this.showDims === 'detail' && isSel) {
-        const ops = layoutDims(g.dims, [0, 0, g.w, g.h], 34 * k, fs);
-        root.appendChild(renderDimOps(ops, k, dx, dy));
-      }
+      if (this.showDims === 'detail' && isSel) detail = { g, dx, dy };
+    }
+    // размеры рисуются поверх всех стекол
+    if (detail) {
+      const { g, dx, dy } = detail;
+      root.appendChild(renderDimOps(layoutDims(g.dims, [0, 0, g.w, g.h], 30 * k, fs, 8 * k), k, dx, dy));
     }
     if (this.showDims === 'overview' || (this.showDims === 'detail' && !(this.sel && this.sel.type === 'glass'))) {
-      const [minx, miny, mx, my] = this.extents();
-      const topY = Math.max(...r.glasses.map((g) => g.y + g.h), 0);
-      const ops = layoutDims(r.dims, [minx, miny, mx, topY || my], 34 * k, fs);
+      const ops = layoutDims(r.dims, this.extents(), 30 * k, fs, 8 * k);
       root.appendChild(renderDimOps(ops, k));
     }
   }

@@ -23,6 +23,19 @@ LAYERS = {
 }
 
 
+ALIGN = {"center": TextEntityAlignment.BOTTOM_CENTER, "left": TextEntityAlignment.BOTTOM_LEFT,
+         "right": TextEntityAlignment.BOTTOM_RIGHT}
+
+
+def _arrow(msp, tip, u, th, dx, dy):
+    (tx, ty), (ux, uy) = tip, u
+    al, aw = th * 0.7, th * 0.18
+    bx, by = tx - ux * al, ty - uy * al
+    px, py = -uy * aw, ux * aw
+    msp.add_solid([(tx + dx, ty + dy), (bx + px + dx, by + py + dy), (bx - px + dx, by - py + dy)],
+                  dxfattribs={"layer": "DIM"})
+
+
 def _new_doc():
     doc = ezdxf.new("R2010", setup=True)
     doc.header["$INSUNITS"] = 4  # мм
@@ -64,21 +77,15 @@ def draw_glass(msp, g: dict, dx: float = 0.0, dy: float = 0.0, with_dims: bool =
         if -1 < ly < h + 1:
             msp.add_line((dx - S * 0.4, ly + dy), (w + dx + S * 0.4, ly + dy), dxfattribs={"layer": "AXIS"})
     if with_dims:
-        for op in layout_dims(g.get("dims", []), (0, 0, w, h), S, th):
+        for op in layout_dims(g.get("dims", []), (0, 0, w, h), S, th, th * 0.7):
             if op[0] == "line":
                 msp.add_line((op[1][0] + dx, op[1][1] + dy), (op[2][0] + dx, op[2][1] + dy), dxfattribs={"layer": "DIM"})
             elif op[0] == "arrow":
-                (tx, ty), (ux, uy) = op[1], op[2]
-                al, aw = th * 0.7, th * 0.18
-                bx, by = tx - ux * al, ty - uy * al
-                px, py = -uy * aw, ux * aw
-                msp.add_solid([(tx + dx, ty + dy), (bx + px + dx, by + py + dy), (bx - px + dx, by - py + dy)],
-                              dxfattribs={"layer": "DIM"})
+                _arrow(msp, op[1], op[2], th, dx, dy)
             elif op[0] == "text":
                 _, (x, y), text, ang, hh, align = op
                 t = msp.add_text(text, height=hh, rotation=ang, dxfattribs={"layer": "DIM", "style": "GlassCAD"})
-                t.set_placement((x + dx, y + dy), align=TextEntityAlignment.BOTTOM_CENTER if align == "center"
-                                else TextEntityAlignment.BOTTOM_LEFT)
+                t.set_placement((x + dx, y + dy), align=ALIGN[align])
     if label:
         t = msp.add_text(label, height=th, dxfattribs={"layer": "TEXT", "style": "GlassCAD"})
         t.set_placement((dx, dy - S * 3.2), align=TextEntityAlignment.BOTTOM_LEFT)
@@ -117,13 +124,17 @@ def product_dxf(resolved: dict, *, with_dims=True, order_no="") -> bytes:
             maxx = max(g["x"] + planes[g["plane"]]["dx"] + g["w"] for g in resolved["glasses"])
             maxy = max(g["y"] + g["h"] for g in resolved["glasses"])
             th = max(15.0, maxx * 0.012)
-            for op in layout_dims(resolved.get("dims", []), (0, 0, maxx, maxy), th * 3.2, th):
+            miny = min(g["y"] for g in resolved["glasses"])
+            minx = min(allx)
+            for op in layout_dims(resolved.get("dims", []), (minx, miny, maxx, maxy), th * 3.2, th, th * 0.7):
                 if op[0] == "line":
                     msp.add_line(op[1], op[2], dxfattribs={"layer": "DIM"})
+                elif op[0] == "arrow":
+                    _arrow(msp, op[1], op[2], th, 0, 0)
                 elif op[0] == "text":
                     _, (x, y), text, ang, hh, align = op
                     t = msp.add_text(text, height=hh, rotation=ang, dxfattribs={"layer": "DIM", "style": "GlassCAD"})
-                    t.set_placement((x, y), align=TextEntityAlignment.BOTTOM_CENTER)
+                    t.set_placement((x, y), align=ALIGN[align])
     return _to_bytes(doc)
 
 

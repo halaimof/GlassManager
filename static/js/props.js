@@ -239,9 +239,13 @@ function opProps(ctx, id) {
         field('Ширина', numInput(op.w, (v) => set((o) => { o.w = v; }), { key: 'o.w' })),
         field('Высота', numInput(op.h, (v) => set((o) => { o.h = v; }), { key: 'o.h' })),
         field('Радиус', numInput(op.r, (v) => set((o) => { o.r = v; }), { key: 'o.r' }))),
-      field('Центр X', refEditor(op.x, X_REFS, (v) => set((o) => { o.x = v; }), axes, 'o.x')),
-      field('Центр Y', refEditor(op.y, Y_REFS, (v) => set((o) => { o.y = v; }), axes, 'o.y')),
-      h('span.hint', 'Если вырез пересекает кромку — контур стекла меняется (вырез на кромке).'),
+      field('По X', refEditor(op.x, X_REFS, (v) => set((o) => { o.x = v; }), axes, 'o.x')),
+      field('до', selectInput([['edge', 'края выреза (ближнего к базе)'], ['center', 'центра выреза']], (op.anchor || {}).x || 'center',
+        (v) => set((o) => { o.anchor = { ...(o.anchor || {}), x: v }; }))),
+      field('По Y', refEditor(op.y, Y_REFS, (v) => set((o) => { o.y = v; }), axes, 'o.y')),
+      field('до', selectInput([['edge', 'края выреза (ближнего к базе)'], ['center', 'центра выреза']], (op.anchor || {}).y || 'center',
+        (v) => set((o) => { o.anchor = { ...(o.anchor || {}), y: v }; }))),
+      h('span.hint', 'Пример: «от верха 300 до края выреза» — верхний край выреза в 300 мм от верха стекла; «от правого края 0 до края» — вырез вплотную к правой кромке. Вырез, касающийся кромки, меняет контур стекла.'),
     ];
   } else {
     const rep = op.repeat || { count: 1, step: 0, dir: 'v' };

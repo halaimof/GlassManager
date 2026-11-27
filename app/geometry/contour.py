@@ -168,11 +168,16 @@ def build_contour(outline: list[tuple[float, float]], op_segs: list[dict]) -> di
     for ring in result.interiors:
         extra_rings.append([[_clean(x), _clean(y)] for x, y in list(ring.coords)[:-1]])
 
+    # Границы вырезов — по реально удалённому стеклу (а не по исходной геометрии DXF):
+    # линии вдоль кромки, «вспомогательные» хвосты и т.п. площади не имеют и в размеры не попадают.
     cut_boxes = []
-    for cp in cut_polys:
-        inter = cp.intersection(glass)
-        if not inter.is_empty:
-            cut_boxes.append([round(v, 4) for v in inter.bounds])
+    removed = glass.difference(result)
+    parts = list(removed.geoms) if hasattr(removed, "geoms") else [removed]
+    for part in parts:
+        if part.is_empty or part.area < 1e-3:
+            continue
+        cut_boxes.append([round(v, 4) for v in part.bounds])
+    cut_boxes.sort(key=lambda b: (b[1], b[0]))
 
     def strip(chain):
         return [{k: v for k, v in s.items() if k != "rev"} for s in chain]

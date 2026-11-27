@@ -52,64 +52,89 @@ export function segPath(seg, dx = 0, dy = 0) {
   return `M${f(x0 + dx)},${f(-(y0 + dy))}A${f(seg.r)},${f(seg.r)} 0 ${sw > 180 ? 1 : 0} 0 ${f(x1 + dx)},${f(-(y1 + dy))}`;
 }
 
-// Порт export/dimlayout.py — одинаковая логика размещения размеров
-export function layoutDims(dims, bbox, S, th) {
+const SIDES = ['top', 'bottom', 'left', 'right'];
+export const textW = (t, th) => t.length * th * 0.62;
+const axisOf = (d) => { const a = d.dir === 'h' ? d.p1[0] : d.p1[1], b = d.dir === 'h' ? d.p2[0] : d.p2[1]; return a <= b ? [a, b] : [b, a]; };
+
+// Порт export/dimlayout.py: размеры снаружи изделия, без наложений
+export function layoutDims(dims, bbox, S, th, al) {
   const [minx, miny, maxx, maxy] = bbox;
+  al = al || th * 0.8;
+  const gap = th * 0.35, extGap = th * 0.4, over = th * 0.6, rowH = th * 1.35;
   const ops = [];
-  const gap = S * 0.12, over = S * 0.2;
-  const smallRun = {};
-  for (const d of dims) {
-    if (d.t === 'lin') {
-      const key = `${d.dir}|${d.side}|${d.level ?? 1}`;
-      const [x1, y1] = d.p1, [x2, y2] = d.p2;
-      const side = d.side || 'bottom', lvl = d.level ?? 1;
-      const tw = d.text.length * th * 0.62;
-      if (d.dir === 'h') {
-        if (Math.abs(x2 - x1) < 1e-6) continue;
-        let yl, sg;
-        if (side === 'top') { yl = maxy + lvl * S; sg = 1; } else if (side === 'inside') { yl = y1; sg = 0; } else { yl = miny - lvl * S; sg = -1; }
-        if (sg) { ops.push(['line', [x1, y1 + sg * gap], [x1, yl + sg * over]]); ops.push(['line', [x2, y2 + sg * gap], [x2, yl + sg * over]]); }
-        ops.push(['line', [x1, yl], [x2, yl]]);
-        const dir = x2 > x1 ? 1 : -1;
-        ops.push(['arrow', [x1, yl], [-dir, 0]], ['arrow', [x2, yl], [dir, 0]]);
-        let mx = (x1 + x2) / 2, ty = yl + th * 0.35;
-        if (Math.abs(x2 - x1) < tw + th) {
-          const n = smallRun[key] || 0; smallRun[key] = n + 1;
-          if (n % 2 === 0) ty = yl - th * 1.25; else mx = Math.max(x1, x2) + tw / 2 + th * 0.4;
-        } else smallRun[key] = 0;
-        ops.push(['text', [mx, ty], d.text, 0, th, 'center', d.overall]);
-      } else {
-        if (Math.abs(y2 - y1) < 1e-6) continue;
-        let xl, sg;
-        if (side === 'right') { xl = maxx + lvl * S; sg = 1; } else if (side === 'inside') { xl = x1; sg = 0; } else { xl = minx - lvl * S; sg = -1; }
-        if (sg) { ops.push(['line', [x1 + sg * gap, y1], [xl + sg * over, y1]]); ops.push(['line', [x2 + sg * gap, y2], [xl + sg * over, y2]]); }
-        ops.push(['line', [xl, y1], [xl, y2]]);
-        const dir = y2 > y1 ? 1 : -1;
-        ops.push(['arrow', [xl, y1], [0, -dir]], ['arrow', [xl, y2], [0, dir]]);
-        let my = (y1 + y2) / 2, tx = xl - th * 0.35;
-        if (Math.abs(y2 - y1) < tw + th) {
-          const n = smallRun[key] || 0; smallRun[key] = n + 1;
-          if (n % 2 === 0) tx = xl + th * 1.25; else my = Math.max(y1, y2) + tw / 2 + th * 0.4;
-        } else smallRun[key] = 0;
-        ops.push(['text', [tx, my], d.text, 90, th, 'center', d.overall]);
+  const lins = dims.filter((d) => d.t === 'lin' && SIDES.includes(d.side) && Math.abs(axisOf(d)[1] - axisOf(d)[0]) > 1e-6);
+  const dias = dims.filter((d) => d.t === 'dia');
+  const pad = { top: 0, bottom: 0, left: 0, right: 0 };
+  const midx = (minx + maxx) / 2;
+  const diaSide = { left: [], right: [] };
+  for (const d of dias) {
+    const side = d.c[0] < midx ? 'left' : 'right';
+    diaSide[side].push(d);
+    pad[side] = Math.max(pad[side], th * 0.9 + textW(d.text, th) + th * 0.6);
+  }
+  const groups = new Map();
+  for (const d of lins) { const k = `${d.side}|${d.level ?? 1}`; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(d); }
+  const rowOf = new Map(), rows = {};
+  for (const [key, ds] of groups) {
+    const placed = [];
+    for (const d of [...ds].sort((x, y) => (axisOf(x)[0] + axisOf(x)[1]) - (axisOf(y)[0] + axisOf(y)[1]))) {
+      const [a, b] = axisOf(d), c = (a + b) / 2, w = textW(d.text, th);
+      const iv = [c - w / 2 - th * 0.25, c + w / 2 + th * 0.25];
+      let r = 0;
+      for (;;) {
+        if (r === placed.length) placed.push([]);
+        if (placed[r].every(([x0, x1]) => iv[1] <= x0 || iv[0] >= x1)) { placed[r].push(iv); break; }
+        r++;
       }
-    } else if (d.t === 'dia') {
-      const [cx, cy] = d.c, r = d.r, a = Math.PI / 4;
-      const p0 = [cx + r * Math.cos(a), cy + r * Math.sin(a)];
-      const p1 = [cx + (r + S * 0.45) * Math.cos(a), cy + (r + S * 0.45) * Math.sin(a)];
-      const tw = d.text.length * th * 0.62;
-      ops.push(['line', p0, p1], ['line', p1, [p1[0] + tw + th * 0.3, p1[1]]]);
-      ops.push(['arrow', p0, [-Math.cos(a), -Math.sin(a)]]);
-      ops.push(['text', [p1[0] + th * 0.15, p1[1] + th * 0.3], d.text, 0, th, 'left']);
-    } else if (d.t === 'aligned') {
-      const [x1, y1] = d.p1, [x2, y2] = d.p2;
-      const ln = Math.hypot(x2 - x1, y2 - y1);
-      if (ln < 1e-6) continue;
-      const ux = (x2 - x1) / ln, uy = (y2 - y1) / ln;
-      let ang = Math.atan2(uy, ux) * 180 / Math.PI;
-      if (ang > 90 || ang < -90) ang += 180;
-      ops.push(['text', [(x1 + x2) / 2 + uy * th * 1.4, (y1 + y2) / 2 - ux * th * 1.4], d.text, ang, th * 0.9, 'center']);
+      rowOf.set(d, r);
     }
+    rows[key] = placed.length;
+  }
+  const dist = {};
+  for (const side of SIDES) {
+    let cur = pad[side] + S;
+    const levels = Object.keys(rows).filter((k) => k.startsWith(side + '|')).map((k) => +k.split('|')[1]).sort((a, b) => a - b);
+    for (const lv of levels) { dist[`${side}|${lv}`] = cur; cur += rows[`${side}|${lv}`] * rowH + S * 0.55; }
+  }
+  for (const d of lins) {
+    const side = d.side, lv = d.level ?? 1;
+    const [a, b] = axisOf(d), r = rowOf.get(d), far = dist[`${side}|${lv}`];
+    const short = (b - a) < al * 2.6;
+    if (d.dir === 'h') {
+      let yl, e0, sg, ty;
+      if (side === 'top') { yl = maxy + far; e0 = maxy + extGap; sg = 1; ty = yl + gap + r * rowH; } else { yl = miny - far; e0 = miny - extGap; sg = -1; ty = yl - gap - th * 0.75 - r * rowH; }
+      for (const x of [a, b]) ops.push(['line', [x, e0], [x, yl + sg * over]]);
+      if (short) { ops.push(['line', [a - al * 1.6, yl], [b + al * 1.6, yl]], ['arrow', [a, yl], [1, 0]], ['arrow', [b, yl], [-1, 0]]); } else { ops.push(['line', [a, yl], [b, yl]], ['arrow', [a, yl], [-1, 0]], ['arrow', [b, yl], [1, 0]]); }
+      ops.push(['text', [(a + b) / 2, ty], d.text, 0, th, 'center', d.overall]);
+    } else {
+      let xl, e0, sg, tx;
+      if (side === 'left') { xl = minx - far; e0 = minx - extGap; sg = -1; tx = xl - gap - r * rowH; } else { xl = maxx + far; e0 = maxx + extGap; sg = 1; tx = xl + gap + th * 0.75 + r * rowH; }
+      for (const y of [a, b]) ops.push(['line', [e0, y], [xl + sg * over, y]]);
+      if (short) { ops.push(['line', [xl, a - al * 1.6], [xl, b + al * 1.6]], ['arrow', [xl, a], [0, 1]], ['arrow', [xl, b], [0, -1]]); } else { ops.push(['line', [xl, a], [xl, b]], ['arrow', [xl, a], [0, -1]], ['arrow', [xl, b], [0, 1]]); }
+      ops.push(['text', [tx, (a + b) / 2], d.text, 90, th, 'center', d.overall]);
+    }
+  }
+  for (const side of ['left', 'right']) {
+    let last = Infinity;
+    const edge = side === 'right' ? maxx : minx, sg = side === 'right' ? 1 : -1;
+    for (const d of [...diaSide[side]].sort((x, y) => y.c[1] - x.c[1])) {
+      const [cx, cy] = d.c, rr = d.r;
+      const ly = Math.min(cy, last - rowH); last = ly;
+      const pHole = [cx + sg * rr, cy], knee = [edge + sg * th * 0.5, cy], sh0 = [edge + sg * th * 0.9, ly];
+      const sh1 = [sh0[0] + sg * (textW(d.text, th) + th * 0.3), ly];
+      ops.push(['line', pHole, knee], ['line', knee, sh0], ['line', sh0, sh1], ['arrow', pHole, [-sg, 0]]);
+      ops.push(['text', [sh0[0] + sg * th * 0.15, ly + th * 0.2], d.text, 0, th, side === 'right' ? 'left' : 'right']);
+    }
+  }
+  for (const d of dims) {
+    if (d.t !== 'aligned') continue;
+    const [x1, y1] = d.p1, [x2, y2] = d.p2;
+    const ln = Math.hypot(x2 - x1, y2 - y1);
+    if (ln < 1e-6) continue;
+    const ux = (x2 - x1) / ln, uy = (y2 - y1) / ln;
+    let ang = Math.atan2(uy, ux) * 180 / Math.PI;
+    if (ang > 90 || ang < -90) ang += 180;
+    ops.push(['text', [(x1 + x2) / 2 + uy * th * 1.4, (y1 + y2) / 2 - ux * th * 1.4], d.text, ang, th * 0.9, 'center']);
   }
   return ops;
 }
@@ -129,7 +154,7 @@ export function renderDimOps(ops, k, dx = 0, dy = 0) {
     } else if (op[0] === 'text') {
       const [, [x, y], text, ang, hh, align, bold] = op;
       const t = s('text', {
-        class: 'dim-text', x: x + dx, y: -(y + dy), 'font-size': hh, 'stroke-width': hh * 0.22, 'text-anchor': align === 'center' ? 'middle' : 'start',
+        class: 'dim-text', x: x + dx, y: -(y + dy), 'font-size': hh, 'stroke-width': hh * 0.22, 'text-anchor': align === 'center' ? 'middle' : align === 'right' ? 'end' : 'start',
         transform: ang ? `rotate(${-ang} ${x + dx} ${-(y + dy)})` : null, 'font-weight': bold ? 700 : null,
       }, text);
       g.appendChild(t);

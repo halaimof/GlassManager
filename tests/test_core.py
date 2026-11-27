@@ -227,3 +227,76 @@ def test_dxf_import_roundtrip(tmp_path):
 def test_new_panel_has_stable_id():
     p = new_panel("door")
     assert len(p["id"]) == 32 and p["name"] == "Дверь"
+
+
+def test_cutout_anchor_edge_and_flush_notch():
+    data = tmpl("door_fixed")
+    door = data["panels"][0]
+    # новый вырез: правый край вплотную к кромке, верх выреза в 300 мм от верха
+    data["operations"] = [{"id": "c", "panel_id": door["id"], "type": "cutout", "w": 20, "h": 63, "r": 5,
+                           "anchor": {"x": "edge", "y": "edge"},
+                           "x": {"ref": "right", "value": 0}, "y": {"ref": "top", "value": 300}}]
+    g = resolve(data, Library())["glasses"][0]
+    x0, y0, x1, y1 = g["cut_boxes"][0]
+    assert (x0, x1) == pytest.approx((g["w"] - 20, g["w"]))
+    assert (y0, y1) == pytest.approx((g["h"] - 363, g["h"] - 300))
+    # на кромке нет «рожек»: точки контура на правой кромке только вне выреза
+    on_edge = [v[1] for v in g["contour"] if abs(v[0] - g["w"]) < 1e-6]
+    assert all(y <= y0 + 1e-6 or y >= y1 - 1e-6 for y in on_edge)
+    # размерная цепочка по Y справа идёт до краёв выреза: 300 и 63
+    texts = [d["text"] for d in g["dims"] if d["t"] == "lin" and d["side"] == "right" and d["level"] == 1]
+    assert "300" in texts and "63" in texts
+
+
+def test_cutout_without_anchor_keeps_old_center_behaviour():
+    data = tmpl("door_fixed")
+    door = data["panels"][0]
+    data["operations"] = [{"id": "c", "panel_id": door["id"], "type": "cutout", "w": 40, "h": 60, "r": 0,
+                           "x": {"ref": "right", "value": 0}, "y": {"ref": "top", "value": 300}}]
+    g = resolve(data, Library())["glasses"][0]
+    x0, y0, x1, y1 = g["cut_boxes"][0]
+    assert x0 == pytest.approx(g["w"] - 20) and (y1 - y0) == pytest.approx(60)
+
+
+def test_edge_line_marked_as_processing_does_not_inflate_cut_size():
+    segs = [{"t": "line", "p1": [500, 400], "p2": [480, 400]}, {"t": "line", "p1": [480, 400], "p2": [480, 463]},
+            {"t": "line", "p1": [480, 463], "p2": [500, 463]}, {"t": "line", "p1": [500, 392.5], "p2": [500, 470.5]}]
+    r = build_contour([(0, 0), (500, 0), (500, 1000), (0, 1000)], segs)
+    assert [b[3] - b[1] for b in r["cut_boxes"]] == [pytest.approx(63)]
+
+
+def test_dimension_layout_outside_and_without_overlaps():
+    from app.export.dimlayout import layout_dims, ops_extent, text_w
+
+    lib, kit = _hinge_lib()
+    data = apply_kit(tmpl("fixed_door"), kit, lib)
+    data["operations"] = [{"id": "g", "panel_id": data["panels"][1]["id"], "type": "group", "mirror": "x",
+                           "repeat": {"count": 3, "step": 8, "dir": "v"},
+                           "items": [{"d": 10, "x": {"ref": "left", "value": 40}, "y": {"ref": "top", "value": 30}}]}]
+    res = resolve(data, lib)
+    for g in res["glasses"]:
+        th = 12.0
+        ops = layout_dims(g["dims"], (0, 0, g["w"], g["h"]), th * 3, th, th * 0.8)
+        boxes = []
+        for op in ops:
+            if op[0] != "text":
+                continue
+            (x, y), text, ang, al_ = op[1], op[2], op[3], op[5]
+            w = text_w(text, op[4])
+            if ang == 90:
+                box = (x - th * 0.75, y - w / 2, x, y + w / 2)
+            elif al_ == "left":
+                box = (x, y, x + w, y + th * 0.75)
+            elif al_ == "right":
+                box = (x - w, y, x, y + th * 0.75)
+            else:
+                box = (x - w / 2, y, x + w / 2, y + th * 0.75)
+            if op[3] in (0, 90):
+                # текст размеров — снаружи стекла
+                assert box[2] <= 0 + 1e-6 or box[0] >= g["w"] - 1e-6 or box[3] <= 0 + 1e-6 or box[1] >= g["h"] - 1e-6, (text, box)
+            boxes.append((box, text))
+        for i, (a, ta) in enumerate(boxes):
+            for b, tb in boxes[i + 1:]:
+                overlap = min(a[2], b[2]) - max(a[0], b[0]) > 0.5 and min(a[3], b[3]) - max(a[1], b[1]) > 0.5
+                assert not overlap, (ta, a, tb, b)
+        assert ops_extent(ops, th)

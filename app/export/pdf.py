@@ -29,6 +29,9 @@ GLASS_FILL = colors.HexColor("#e8f3f7")
 CUT = colors.HexColor("#c0392b")
 DIMC = colors.HexColor("#2c3e50")
 ZEBRA = colors.HexColor("#f5f7f9")
+DIM_PT = 7.5      # размер шрифта размеров, пт
+PT_MM = 0.3528    # мм в пункте
+ARROW_MM = 2.2    # длина стрелки на листе, мм
 
 _FONTS_OK = None
 
@@ -294,7 +297,7 @@ def draw_dims(c, v: View, ops, font, size=7.5):
         elif op[0] == "arrow":
             (tx, ty), (ux, uy) = op[1], op[2]
             px, py = v.p(tx, ty)
-            al, aw = 2.4 * mm, 0.55 * mm
+            al, aw = ARROW_MM * mm, 0.5 * mm
             bx, by = px - ux * al, py - uy * al
             path = c.beginPath()
             path.moveTo(px, py)
@@ -311,6 +314,8 @@ def draw_dims(c, v: View, ops, font, size=7.5):
             c.setFont(font, size)
             if align == "center":
                 c.drawCentredString(0, 0, text)
+            elif align == "right":
+                c.drawRightString(0, 0, text)
             else:
                 c.drawString(0, 0, text)
             c.restoreState()
@@ -429,12 +434,11 @@ def _draw_product(c, doc: Doc, res: dict, box):
     bbox = (0, 0, maxx, maxy)
     # подбор масштаба с учётом размеров: S в мм модели ≈ 9 мм листа
     tmp = View(bbox, box)
-    for _ in range(3):
-        S = 9 * mm / tmp.s
-        tmp = View(dims_extent(bbox, res.get("dims", []), S), box)
+    for _ in range(4):
+        S, th, al = 8 * mm / tmp.s, DIM_PT * PT_MM * mm / tmp.s, ARROW_MM * mm / tmp.s
+        tmp = View(dims_extent(bbox, res.get("dims", []), S, th, al), box)
     v = tmp
-    S = 9 * mm / v.s
-    th = 2.6 * mm / v.s
+    S, th, al = 8 * mm / v.s, DIM_PT * PT_MM * mm / v.s, ARROW_MM * mm / v.s
     # проём
     for pl in planes.values():
         outline = res["opening"].get("outline") if pl["key"] == "front" else None
@@ -462,7 +466,7 @@ def _draw_product(c, doc: Doc, res: dict, box):
         c.setFillColor(ACCENT)
         c.setFont(doc.FB, 9)
         c.drawCentredString(cx, cy, g["name"])
-    draw_dims(c, v, layout_dims(res.get("dims", []), bbox, S, th), doc.F, 7.5)
+    draw_dims(c, v, layout_dims(res.get("dims", []), bbox, S, th, al), doc.F, DIM_PT)
 
 
 def glass_sheet(doc: Doc, product: dict, res: dict, g: dict, part_no: str):
@@ -475,11 +479,10 @@ def glass_sheet(doc: Doc, product: dict, res: dict, g: dict, part_no: str):
         box = (15 * mm, 22 * mm, W - 30 * mm - tb_w - 8 * mm, y - 26 * mm)
         bbox = (0, 0, g["w"], g["h"])
         v = View(bbox, box)
-        for _ in range(3):
-            S = 9 * mm / v.s
-            v = View(dims_extent(bbox, g.get("dims", []), S), box)
-        S = 9 * mm / v.s
-        th = 2.6 * mm / v.s
+        for _ in range(4):
+            S, th, al = 8 * mm / v.s, DIM_PT * PT_MM * mm / v.s, ARROW_MM * mm / v.s
+            v = View(dims_extent(bbox, g.get("dims", []), S, th, al), box)
+        S, th, al = 8 * mm / v.s, DIM_PT * PT_MM * mm / v.s, ARROW_MM * mm / v.s
         _draw_contour(c, v, g["contour"], lw=1.1)
         draw_glass_details(c, v, g, lw=0.7)
         # оси
@@ -491,7 +494,7 @@ def glass_sheet(doc: Doc, product: dict, res: dict, g: dict, part_no: str):
             if -1 < ly < g["h"] + 1:
                 c.line(*v.p(-S * 0.3, ly), *v.p(g["w"] + S * 0.3, ly))
         c.setDash()
-        draw_dims(c, v, layout_dims(g.get("dims", []), bbox, S, th), doc.F, 8)
+        draw_dims(c, v, layout_dims(g.get("dims", []), bbox, S, th, al), doc.F, DIM_PT)
         # Штамп
         x0 = W - 15 * mm - tb_w
         c.setStrokeColor(INK)

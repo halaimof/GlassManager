@@ -163,7 +163,7 @@ export async function constructorPage(root, pid) {
     const op = { id, panel_id: gid, type, name: '' };
     if (type === 'hole') Object.assign(op, { d: 12, x: { ref: 'left', value: 100 }, y: { ref: 'top', value: 100 } });
     if (type === 'group') Object.assign(op, { mirror: 'x', repeat: { count: 1, step: 0, dir: 'v' }, items: [{ d: 16, x: { ref: 'left', value: 80 }, y: { ref: 'top', value: 30 } }, { d: 10, x: { ref: 'left', value: 80 }, y: { ref: 'top', value: 60 } }] });
-    if (type === 'cutout') Object.assign(op, { w: 40, h: 60, r: 5, x: { ref: 'right', value: 0 }, y: { ref: 'top', value: 300 } });
+    if (type === 'cutout') Object.assign(op, { w: 20, h: 60, r: 5, anchor: { x: 'edge', y: 'edge' }, x: { ref: 'right', value: 0 }, y: { ref: 'top', value: 300 } });
     change((d) => { d.operations.push(op); });
     select({ type: 'op', id, glass: gid });
   }
