@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import math
 
-from shapely.geometry import MultiPolygon, Point as SPoint, Polygon
+from shapely.geometry import LineString, MultiPolygon, Point as SPoint, Polygon
 from shapely.geometry.polygon import orient
 
 from .prims import chain_closed, chain_points, chain_segments, discretize, dist, norm_angle, arc_sweep
 
 ON_ARC_TOL = 0.01
+SIDE_HINT = "Проверьте в модели фурнитуры «Где стекло относительно края» и точку привязки."
+OUTSIDE_MSG = "Обработка оказалась вне стекла и не вырезана. " + SIDE_HINT
 EDGE_TOL = 0.5
 
 
@@ -117,7 +119,7 @@ def build_contour(outline: list[tuple[float, float]], op_segs: list[dict]) -> di
             cut_polys.append(cp)
             cut_arcs.append(c)
         else:
-            warnings.append(f"Отверстие Ø{c['r'] * 2:g} находится вне стекла")
+            warnings.append(f"Отверстие Ø{c['r'] * 2:g} находится вне стекла. " + SIDE_HINT)
 
     for chain in chain_segments(op_segs):
         pts = chain_points(chain)
@@ -133,7 +135,7 @@ def build_contour(outline: list[tuple[float, float]], op_segs: list[dict]) -> di
                 cut_polys.append(poly)
                 cut_arcs += [s for s in chain if s["t"] == "arc"]
             else:
-                warnings.append("Контур обработки находится вне стекла")
+                warnings.append(OUTSIDE_MSG)
             continue
         a, b = pts[0], pts[-1]
         a_ok = not edge_test.contains(SPoint(a))
@@ -144,10 +146,15 @@ def build_contour(outline: list[tuple[float, float]], op_segs: list[dict]) -> di
             ext = 2.0
             ring = pts + [(b[0] + nb[0] * ext, b[1] + nb[1] * ext), (a[0] + na[0] * ext, a[1] + na[1] * ext)]
             poly = Polygon(ring).buffer(0)
-            if not poly.is_empty and glass.intersects(poly):
+            if not poly.is_empty and glass.intersection(poly).area > 1e-3:
                 cut_polys.append(poly)
                 cut_arcs += [s for s in chain if s["t"] == "arc"]
                 continue
+        line = LineString(pts)
+        if glass.intersection(line).length < 0.05 * max(line.length, 1e-9) + 1e-6:
+            # вся обработка снаружи стекла — почти всегда перепутана сторона стекла в модели фурнитуры
+            warnings.append(OUTSIDE_MSG)
+            continue
         open_inner.append(chain)
         warnings.append("Незамкнутый контур обработки не касается кромки — выведен как линия")
 

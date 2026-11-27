@@ -387,3 +387,12 @@ def test_node_view_dimensions_the_cutout_itself():
     assert "R10" in texts
     perp = [d for d in v["dims"] if d["t"] == "lin" and d["side"] == "top"]
     assert all(min(d["p1"][0], d["p2"][0]) < 500 and max(d["p1"][0], d["p2"][0]) == 500 for d in perp)  # каждая — от кромки
+
+
+def test_processing_on_wrong_glass_side_is_reported():
+    """Сторона узла с перепутанной стороной стекла: вырез уходит наружу — должно быть понятное предупреждение."""
+    segs = [{"t": "line", "p1": [500, 470], "p2": [520, 470]}, {"t": "line", "p1": [520, 470], "p2": [520, 530]},
+            {"t": "line", "p1": [520, 530], "p2": [500, 530]}]  # вырез нарисован снаружи правой кромки
+    r = build_contour([(0, 0), (500, 0), (500, 1000), (0, 1000)], segs)
+    assert r["cut_boxes"] == []
+    assert any("вне стекла" in w and "Где стекло относительно края" in w for w in r["warnings"])

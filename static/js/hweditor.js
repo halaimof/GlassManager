@@ -102,9 +102,12 @@ export async function hardwareEditor(root, id) {
             h('div.sec-title.small.muted', 'ИНСТРУМЕНТ (клик по чертежу)'),
             h('div.tool-grid', tools.map(([k, label, color]) => h('button.tool' + (st.tool === k ? '.on' : ''), { onclick: () => { st.tool = k; renderLeft(); renderView(); } }, h('span.sw', { style: { background: color } }), label))),
             sd.edge_pid ? field('Где стекло относительно края',
-              h('div.segmented', (vertical ? [['left', 'Слева'], ['right', 'Справа']] : [['above', 'Сверху'], ['below', 'Снизу']]).map(([k, l]) =>
-                h('button' + (sd.glass_side === k || (!vertical && sd.glass_side === (k === 'above' ? 'left' : 'right')) ? '.on' : ''), { onclick: () => { sd.glass_side = k; markDirty(); renderLeft(); renderView(); } }, l))),
-            'Подсвечено голубым') : null,
+              h('div.row',
+                h('div.segmented', (vertical ? [['left', 'Слева'], ['right', 'Справа']] : [['above', 'Сверху'], ['below', 'Снизу']]).map(([k, l]) =>
+                  h('button' + (sd.glass_side === k || (!vertical && sd.glass_side === (k === 'above' ? 'left' : 'right')) ? '.on' : ''), { onclick: () => { sd.glass_side = k; markDirty(); renderLeft(); renderView(); } }, l))),
+                h('button.btn.sm', { onclick: () => { const a = detectGlassSide(sd); if (a) { sd.glass_side = a; markDirty(); renderLeft(); renderView(); } else toast('Нет обработки, по которой можно определить сторону', 'error'); } }, 'Определить по обработке')),
+            'Подсвечено голубым — стекло должно быть там, где нарисована обработка') : null,
+            (() => { const a = sd.edge_pid ? detectGlassSide(sd) : null; return a && a !== sd.glass_side ? h('div.msg.err', 'Обработка нарисована с другой стороны от края — сейчас она ляжет вне стекла и не вырежется. Нажмите «Определить по обработке».') : null; })(),
             h('div.readout', h('span', 'Рабочих примитивов'), h('b', String(nOp)), h('span', 'Вспомогательных'), h('b', String(nAux)),
               h('span', 'Точка привязки'), h('b', sd.anchor ? `${fmt(sd.anchor[0], 2)}; ${fmt(sd.anchor[1], 2)}` : '—'))) : null,
           h('div.sec-title.small.muted', 'ПАРАМЕТРИЧЕСКИЕ ОТВЕРСТИЯ СТОРОНЫ'),
@@ -147,6 +150,31 @@ export async function hardwareEditor(root, id) {
     const r = svg.getBoundingClientRect();
     return [st.view.x + (e.clientX - r.left) * st.view.w / r.width, -(st.view.y + (e.clientY - r.top) * st.view.h / r.height)];
   }
+  // С какой стороны от линии края лежит рабочая обработка — там и стекло.
+  function detectGlassSide(sd) {
+    const prims = st.dxf ? st.dxf.data.primitives : [];
+    const edge = prims.find((p) => p.id === sd.edge_pid);
+    if (!edge) return null;
+    const sg = edge.segs[0];
+    let d = [sg.p2[0] - sg.p1[0], sg.p2[1] - sg.p1[1]];
+    const l = Math.hypot(...d); if (!l) return null;
+    d = [d[0] / l, d[1] / l];
+    const vertical = Math.abs(d[1]) >= Math.abs(d[0]);
+    if (vertical ? d[1] < 0 : d[0] < 0) d = [-d[0], -d[1]];
+    const leftN = [-d[1], d[0]];
+    let sum = 0;
+    for (const p of prims) {
+      if (p.id === sd.edge_pid || ((sd.roles || {})[p.id] || 'op') !== 'op') continue;
+      for (const g of p.segs) {
+        const pts = g.t === 'line' ? [g.p1, g.p2] : [g.c];
+        for (const q of pts) sum += (q[0] - sg.p1[0]) * leftN[0] + (q[1] - sg.p1[1]) * leftN[1];
+      }
+    }
+    if (Math.abs(sum) < 1e-6) return null;
+    if (vertical) return sum > 0 ? 'left' : 'right';
+    return sum > 0 ? 'above' : 'below';
+  }
+
   function sideFrame() {
     const sd = side();
     const prims = st.dxf ? st.dxf.data.primitives : [];
@@ -272,8 +300,12 @@ export async function hardwareEditor(root, id) {
       sd.edge_pid = pid; sd.roles[pid] = 'aux';
       const sg = prim.segs[0];
       const vertical = Math.abs(sg.p2[1] - sg.p1[1]) >= Math.abs(sg.p2[0] - sg.p1[0]);
-      if (vertical && !['left', 'right'].includes(sd.glass_side)) sd.glass_side = 'left';
-      if (!vertical && !['above', 'below'].includes(sd.glass_side)) sd.glass_side = 'above';
+      const auto = detectGlassSide(sd);
+      if (auto) sd.glass_side = auto;
+      else {
+        if (vertical && !['left', 'right'].includes(sd.glass_side)) sd.glass_side = 'left';
+        if (!vertical && !['above', 'below'].includes(sd.glass_side)) sd.glass_side = 'above';
+      }
       if (!sd.anchor) sd.anchor = [(sg.p1[0] + sg.p2[0]) / 2, (sg.p1[1] + sg.p2[1]) / 2];
     } else {
       sd.roles[pid] = st.tool;
@@ -340,6 +372,15 @@ export async function hardwareEditor(root, id) {
     pv.setAttribute('viewBox', `-60 -1060 ${x + 80} 1160`);
     modal('Проверка: узел на тестовых стеклах 600 × 1000', h('div.col', pv,
       h('p.muted.small', 'Сторона A — на правой кромке левого стекла, сторона B — на левой кромке правого. Узел по центру высоты. Вырезы на кромке меняют контур.'),
+      ...sides.slice(0, 3).map((sd, i) => {
+        const gl = res.glasses[i];
+        const nCut = gl ? gl.cut_boxes.length + gl.inner.length : 0, nHole = gl ? gl.holes.length : 0;
+        const configured = !!sd.dxf_id || (sd.holes || []).length || (sd.cutouts || []).length;
+        const label = `Сторона ${sd.key}${sd.label ? ' («' + sd.label + '»)' : ''}`;
+        if (!configured) return h('div.msg.warn', `${label}: обработка не задана — выберите DXF или добавьте отверстия/вырезы. На стекле ничего не будет.`);
+        if (!nCut && !nHole) return h('div.msg.err', `${label}: обработка задана, но на стекло не попала. Проверьте «Где стекло относительно края» (кнопка «Определить по обработке»), край стекла и роли линий (рабочие — «Обработка»).`);
+        return h('div.msg', { style: { background: '#eaf6ee', color: '#1e5631' } }, `${label}: на стекле вырезов — ${nCut}, отверстий — ${nHole}.`);
+      }),
       ...res.warnings.map((w) => h('div.msg.warn', w)), ...res.errors.map((w) => h('div.msg.err', w))), { wide: true });
   }
 
